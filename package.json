@@ -1,6 +1,6 @@
 {
   "name": "@tyroneross/bookmark",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Context snapshots for Claude Code — session continuity across compactions and terminals",
   "type": "module",
   "main": "dist/index.js",
