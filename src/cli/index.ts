@@ -343,6 +343,9 @@ const RESET = '\x1b[0m';
 /**
  * Discover the most recent transcript file for the given working directory.
  * Claude Code stores transcripts in ~/.claude/projects/<encoded-path>/*.jsonl
+ *
+ * Uses CLAUDE_SESSION_ID env var if available (set by Claude Code hooks),
+ * otherwise falls back to finding the most recent JSONL by file size + recency.
  */
 function discoverTranscriptPath(cwd: string): string | null {
   const claudeProjectsDir = join(homedir(), '.claude', 'projects');
@@ -354,24 +357,50 @@ function discoverTranscriptPath(cwd: string): string | null {
     // Claude Code encodes paths by replacing / with -
     // e.g., /Users/tyroneross/myproject → -Users-tyroneross-myproject
     const encodedCwd = cwd.replace(/\//g, '-');
-    const matchingDir = projectDirs.find(d =>
-      d === encodedCwd || d.includes(encodedCwd) || encodedCwd.includes(d)
-    );
+
+    // Prefer exact match, then longest match (most specific path)
+    let matchingDir = projectDirs.find(d => d === encodedCwd);
+    if (!matchingDir) {
+      // Find the most specific (longest) matching directory
+      const candidates = projectDirs.filter(d =>
+        d === encodedCwd || encodedCwd.startsWith(d) || d.startsWith(encodedCwd)
+      );
+      if (candidates.length > 0) {
+        // Sort by length descending — most specific match first
+        candidates.sort((a, b) => b.length - a.length);
+        matchingDir = candidates[0];
+      }
+    }
 
     if (!matchingDir) return null;
 
     const transcriptDir = join(claudeProjectsDir, matchingDir);
-    const stat = statSync(transcriptDir);
-    if (!stat.isDirectory()) return null;
+    const dirStat = statSync(transcriptDir);
+    if (!dirStat.isDirectory()) return null;
 
-    // Find the most recent .jsonl file by modification time
+    const sessionId = process.env.CLAUDE_SESSION_ID;
+
+    // If we have a session ID, look for that specific file first
+    if (sessionId) {
+      const sessionFile = join(transcriptDir, `${sessionId}.jsonl`);
+      if (existsSync(sessionFile)) return sessionFile;
+    }
+
+    // Fall back: find the most recent .jsonl file by modification time,
+    // but skip tiny files (likely just file-history-snapshot entries)
     const files = readdirSync(transcriptDir)
       .filter(f => f.endsWith('.jsonl'))
-      .map(f => ({
-        name: f,
-        mtime: statSync(join(transcriptDir, f)).mtimeMs,
-      }))
-      .sort((a, b) => b.mtime - a.mtime);
+      .map(f => {
+        const s = statSync(join(transcriptDir, f));
+        return { name: f, mtime: s.mtimeMs, size: s.size };
+      })
+      // Prefer files >10KB (actual conversations, not just metadata)
+      .sort((a, b) => {
+        const aSubstantial = a.size > 10_000 ? 1 : 0;
+        const bSubstantial = b.size > 10_000 ? 1 : 0;
+        if (aSubstantial !== bSubstantial) return bSubstantial - aSubstantial;
+        return b.mtime - a.mtime;
+      });
 
     return files[0] ? join(transcriptDir, files[0].name) : null;
   } catch {

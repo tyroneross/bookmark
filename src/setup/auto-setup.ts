@@ -207,4 +207,9 @@ The system operates with zero context window tax — all processing runs externa
   return true;
 }
 
-autoSetup();
+// Only run auto-setup when executed as postinstall script, not when imported
+const isPostinstall = process.env.npm_lifecycle_event === 'postinstall' ||
+  process.argv[1]?.endsWith('auto-setup.js');
+if (isPostinstall) {
+  autoSetup();
+}

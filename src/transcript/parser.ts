@@ -50,9 +50,55 @@ export function parseTranscript(transcriptPath: string, options?: ParseOptions):
 
     try {
       const parsed = JSON.parse(trimmed);
-      const entry = normalizeEntry(parsed);
-      if (entry) {
-        entries.push(entry);
+      const normalized = normalizeEntry(parsed);
+      if (normalized) {
+        entries.push(normalized);
+      }
+
+      // Also extract individual tool_use blocks from assistant messages
+      // Claude Code embeds tool calls inside message.content arrays
+      const message = parsed.message as Record<string, unknown> | undefined;
+      if (message?.content && Array.isArray(message.content)) {
+        // Build a tool_use_id → tool_name lookup for resolving tool_result entries
+        const toolIdToName = new Map<string, string>();
+        for (const block of message.content as Array<Record<string, unknown>>) {
+          if (block.type === 'tool_use' && block.id && block.name) {
+            toolIdToName.set(block.id as string, block.name as string);
+          }
+        }
+
+        for (const block of message.content as Array<Record<string, unknown>>) {
+          if (block.type === 'tool_use' && block.name) {
+            entries.push({
+              type: 'tool_use',
+              timestamp: (parsed.timestamp as number) ?? undefined,
+              content: '',
+              tool_name: block.name as string,
+              tool_input: block.input as Record<string, unknown>,
+              session_id: (parsed.sessionId as string) ?? undefined,
+            });
+          }
+          if (block.type === 'tool_result') {
+            const resultContent = typeof block.content === 'string'
+              ? block.content
+              : Array.isArray(block.content)
+                ? (block.content as Array<Record<string, unknown>>)
+                    .map(c => (c.text as string) ?? '')
+                    .filter(Boolean)
+                    .join('\n')
+                : '';
+            // Resolve tool_use_id to actual tool name
+            const toolUseId = block.tool_use_id as string | undefined;
+            const resolvedName = toolUseId ? toolIdToName.get(toolUseId) : undefined;
+            entries.push({
+              type: 'tool_result',
+              timestamp: (parsed.timestamp as number) ?? undefined,
+              content: resultContent,
+              tool_name: resolvedName ?? toolUseId,
+              session_id: (parsed.sessionId as string) ?? undefined,
+            });
+          }
+        }
       }
     } catch {
       // Skip malformed lines
@@ -76,13 +122,30 @@ function normalizeEntry(raw: Record<string, unknown>): TranscriptEntry | null {
 
   const content = extractTextContent(raw);
 
+  // Claude Code JSONL nests message fields
+  const message = raw.message as Record<string, unknown> | undefined;
+
+  // Extract tool_use blocks from assistant message content arrays
+  let toolName = (raw.tool_name as string) ?? (raw.name as string) ?? undefined;
+  let toolInput = (raw.tool_input as Record<string, unknown>) ?? (raw.input as Record<string, unknown>) ?? undefined;
+
+  if (!toolName && message?.content && Array.isArray(message.content)) {
+    for (const block of message.content as Array<Record<string, unknown>>) {
+      if (block.type === 'tool_use') {
+        toolName = block.name as string;
+        toolInput = block.input as Record<string, unknown>;
+        break;
+      }
+    }
+  }
+
   return {
     type,
     timestamp: (raw.timestamp as number) ?? undefined,
     content,
-    tool_name: (raw.tool_name as string) ?? (raw.name as string) ?? undefined,
-    tool_input: (raw.tool_input as Record<string, unknown>) ?? (raw.input as Record<string, unknown>) ?? undefined,
-    session_id: (raw.session_id as string) ?? undefined,
+    tool_name: toolName,
+    tool_input: toolInput,
+    session_id: (raw.sessionId as string) ?? (raw.session_id as string) ?? undefined,
   };
 }
 
@@ -115,7 +178,9 @@ function inferType(raw: Record<string, unknown>): TranscriptEntry['type'] | null
  * Extract text content from various message formats.
  */
 function extractTextContent(raw: Record<string, unknown>): string {
-  const content = raw.content ?? raw.text ?? raw.message ?? '';
+  // Claude Code JSONL nests content under message.content
+  const message = raw.message as Record<string, unknown> | undefined;
+  const content = raw.content ?? message?.content ?? raw.text ?? '';
 
   if (typeof content === 'string') return content;
 
@@ -124,6 +189,7 @@ function extractTextContent(raw: Record<string, unknown>): string {
       .map(block => {
         if (typeof block === 'string') return block;
         if (block.text) return block.text;
+        if (block.thinking) return block.thinking as string;
         if (block.content && typeof block.content === 'string') return block.content;
         return '';
       })

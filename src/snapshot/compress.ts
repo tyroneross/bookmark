@@ -1,95 +1,90 @@
 import type { Snapshot } from '../types.js';
+import { basename } from 'node:path';
 
 /**
  * Compress a full snapshot into a concise markdown summary.
- * Target: <150 lines, <1000 tokens.
+ * Target: <100 lines, <800 tokens — just enough for an LLM to pick up where it left off.
  * This becomes LATEST.md — the hot context tier.
  */
 export function compressToMarkdown(snapshot: Snapshot): string {
   const lines: string[] = [];
 
-  // Header
+  // Header (compact)
   const date = new Date(snapshot.timestamp).toISOString();
-  lines.push(`# Session Context - Last Updated ${date}`);
+  lines.push(`# Session Context - ${date}`);
   lines.push('');
-  lines.push(`> Snapshot: ${snapshot.snapshot_id} | Compaction cycle: ${snapshot.compaction_cycle} | Trigger: ${snapshot.trigger}`);
-  lines.push(`> Context remaining: ${Math.round(snapshot.context_remaining_pct * 100)}% (~${snapshot.token_estimate.toLocaleString()} tokens used)`);
+  const sentiment = snapshot.user_sentiment && snapshot.user_sentiment !== 'neutral'
+    ? ` | user: ${snapshot.user_sentiment}`
+    : '';
+  lines.push(`> ${snapshot.snapshot_id} | cycle ${snapshot.compaction_cycle} | ${snapshot.trigger} | ${Math.round(snapshot.context_remaining_pct * 100)}% ctx remaining${sentiment}`);
   lines.push('');
 
-  // Current Status
-  if (snapshot.current_status && snapshot.current_status !== 'No status available') {
-    lines.push('## Current Status');
-    lines.push(truncate(snapshot.current_status, 300));
+  // Intent — THE most important section. What is the user trying to do?
+  if (snapshot.intent && snapshot.intent !== 'Unknown') {
+    lines.push('## Intent');
+    lines.push(snapshot.intent);
     lines.push('');
   }
 
-  // Decisions
+  // Progress — How far along?
+  if (snapshot.progress && snapshot.progress !== 'Unknown') {
+    lines.push('## Progress');
+    lines.push(snapshot.progress);
+    lines.push('');
+  }
+
+  // Key Decisions — only if present
   if (snapshot.decisions.length > 0) {
-    lines.push('## Decisions Made');
-    for (const d of snapshot.decisions.slice(0, 8)) {
-      const rationale = d.rationale ? ` (${truncate(d.rationale, 80)})` : '';
-      lines.push(`- ${truncate(d.description, 150)}${rationale}`);
-    }
-    if (snapshot.decisions.length > 8) {
-      lines.push(`- ...and ${snapshot.decisions.length - 8} more`);
+    lines.push('## Key Decisions');
+    for (const d of snapshot.decisions.slice(0, 4)) {
+      lines.push(`- ${truncate(d.description, 120)}`);
     }
     lines.push('');
   }
 
-  // Files Changed
-  if (snapshot.files_changed.length > 0) {
-    lines.push('## Files Changed This Session');
-    for (const f of snapshot.files_changed.slice(0, 12)) {
-      const ops = f.operations.join(', ');
-      lines.push(`- \`${f.path}\` (${ops})`);
-    }
-    if (snapshot.files_changed.length > 12) {
-      lines.push(`- ...and ${snapshot.files_changed.length - 12} more files`);
-    }
-    lines.push('');
-  }
-
-  // Open Items
+  // Open Items — remaining work
   if (snapshot.open_items.length > 0) {
     lines.push('## Open Items');
-    for (const item of snapshot.open_items.slice(0, 8)) {
+    for (const item of snapshot.open_items.slice(0, 4)) {
       const priority = item.priority === 'high' ? ' [HIGH]' : item.priority === 'medium' ? ' [MED]' : '';
-      lines.push(`- [ ] ${truncate(item.description, 150)}${priority}`);
-    }
-    if (snapshot.open_items.length > 8) {
-      lines.push(`- ...and ${snapshot.open_items.length - 8} more`);
+      lines.push(`- [ ] ${truncate(item.description, 120)}${priority}`);
     }
     lines.push('');
   }
 
-  // Unknowns / Blockers
+  // Files Changed — use short paths with line counts
+  if (snapshot.files_changed.length > 0) {
+    const totalLines = snapshot.files_changed.reduce((sum, f) => sum + (f.lines_changed ?? 0), 0);
+    lines.push(`## Files Changed (${snapshot.files_changed.length} files, ~${totalLines} lines)`);
+    for (const f of snapshot.files_changed.slice(0, 10)) {
+      const shortPath = shortenPath(f.path, snapshot.project_path);
+      const ops = f.operations.join('/');
+      const lc = f.lines_changed ? ` ~${f.lines_changed}L` : '';
+      lines.push(`- \`${shortPath}\` (${ops}${lc})`);
+    }
+    if (snapshot.files_changed.length > 10) {
+      lines.push(`- ...+${snapshot.files_changed.length - 10} more`);
+    }
+    lines.push('');
+  }
+
+  // Unknowns — only if present, very compact
   if (snapshot.unknowns.length > 0) {
-    lines.push('## Unknowns / Blockers');
-    for (const u of snapshot.unknowns.slice(0, 5)) {
-      lines.push(`- ${truncate(u, 150)}`);
+    lines.push('## Blockers');
+    for (const u of snapshot.unknowns.slice(0, 3)) {
+      lines.push(`- ${truncate(u, 100)}`);
     }
     lines.push('');
   }
 
-  // Errors (only unresolved)
-  const unresolvedErrors = snapshot.errors_encountered.filter(e => !e.resolved);
-  if (unresolvedErrors.length > 0) {
-    lines.push('## Unresolved Errors');
-    for (const e of unresolvedErrors.slice(0, 3)) {
-      const tool = e.tool ? ` (${e.tool})` : '';
-      lines.push(`- ${truncate(e.message, 150)}${tool}`);
-    }
-    lines.push('');
-  }
-
-  // Tool Usage Summary (compact)
+  // Tool usage — single line summary
   if (Object.keys(snapshot.tools_summary).length > 0) {
     const topTools = Object.entries(snapshot.tools_summary)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5)
       .map(([tool, count]) => `${tool}: ${count}`)
       .join(', ');
-    lines.push(`> Tool usage: ${topTools}`);
+    lines.push(`> Tools: ${topTools}`);
     lines.push('');
   }
 
@@ -101,4 +96,13 @@ export function compressToMarkdown(snapshot: Snapshot): string {
 function truncate(text: string, maxLen: number): string {
   if (text.length <= maxLen) return text;
   return text.slice(0, maxLen - 3) + '...';
+}
+
+/** Shorten a file path relative to project root */
+function shortenPath(filePath: string, projectPath: string): string {
+  if (projectPath && filePath.startsWith(projectPath)) {
+    return filePath.slice(projectPath.length).replace(/^\//, '');
+  }
+  // Fall back to basename for external paths
+  return basename(filePath);
 }

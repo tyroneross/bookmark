@@ -12,6 +12,10 @@ export interface Snapshot {
   context_remaining_pct: number;
   token_estimate: number;
 
+  // Core context (what matters for handoff)
+  intent: string;           // What is the user trying to accomplish?
+  progress: string;         // How far along are they?
+
   // Extracted content
   current_status: string;
   decisions: Decision[];
@@ -20,6 +24,7 @@ export interface Snapshot {
   files_changed: FileActivity[];
   errors_encountered: ErrorEntry[];
   tools_summary: Record<string, number>;
+  user_sentiment?: 'positive' | 'neutral' | 'negative';
 
   // Continuity chain
   prior_snapshot_id?: string;
@@ -42,6 +47,7 @@ export interface OpenItem {
 export interface FileActivity {
   path: string;
   operations: FileOperation[];
+  lines_changed?: number;
   summary?: string;
 }
 
@@ -119,6 +125,7 @@ export interface TranscriptEntry {
 export interface TranscriptContent {
   type: string;
   text?: string;
+  thinking?: string;
   name?: string;
   input?: Record<string, unknown>;
   content?: string | TranscriptContent[];
@@ -137,6 +144,8 @@ export interface TokenEstimate {
 }
 
 export interface ExtractionResult {
+  intent?: string;
+  progress?: string;
   current_status: string;
   decisions: Decision[];
   open_items: OpenItem[];
@@ -144,6 +153,7 @@ export interface ExtractionResult {
   files_changed: FileActivity[];
   errors_encountered: ErrorEntry[];
   tools_summary: Record<string, number>;
+  user_sentiment?: 'positive' | 'neutral' | 'negative';
 }
 
 // ─── Hook Input Types ───
