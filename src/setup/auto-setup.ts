@@ -17,6 +17,80 @@ function findProjectRoot(): string {
   return process.cwd();
 }
 
+// ─── Core Setup (reusable) ───
+
+/**
+ * Check if bookmark hooks are already configured in a project.
+ */
+export function isProjectConfigured(cwd: string): boolean {
+  const settingsPath = join(cwd, '.claude', 'settings.json');
+  if (!existsSync(settingsPath)) return false;
+  try {
+    const content = readFileSync(settingsPath, 'utf-8');
+    return content.includes('@tyroneross/bookmark');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Set up bookmark in a project directory.
+ * Creates storage dirs, configures hooks, injects gitignore and CLAUDE.md.
+ * Returns list of steps completed. Silent (no console output) — caller decides output.
+ */
+export function setupProject(cwd: string): string[] {
+  const steps: string[] = [];
+
+  // 1. Ensure storage directories
+  const bookmarkPath = join(cwd, '.claude', 'bookmarks');
+  mkdirSync(join(bookmarkPath, 'snapshots'), { recursive: true });
+  mkdirSync(join(bookmarkPath, 'archive'), { recursive: true });
+  steps.push('Created .claude/bookmarks/ directories');
+
+  // 2. Configure hooks in settings.json
+  try {
+    configureHooks(cwd);
+    steps.push('Configured 4 hooks (PreCompact, SessionStart, UserPromptSubmit, Stop)');
+  } catch { /* silently skip */ }
+
+  // 3. Add .claude/bookmarks/ to .gitignore
+  try {
+    const added = injectGitignore(cwd);
+    if (added) {
+      steps.push('Added .claude/bookmarks/ to .gitignore');
+    }
+  } catch { /* silently skip */ }
+
+  // 4. Inject CLAUDE.md section
+  try {
+    const updated = injectClaudeMd(cwd);
+    if (updated) {
+      steps.push('Updated .claude/CLAUDE.md with bookmark docs');
+    }
+  } catch { /* silently skip */ }
+
+  return steps;
+}
+
+/**
+ * Auto-bootstrap: silently configure hooks if bookmark CLI runs in an unconfigured project.
+ * Called at the top of CLI commands. No-op if already configured.
+ */
+export function ensureProjectBootstrapped(cwd: string): void {
+  if (isProjectConfigured(cwd)) return;
+
+  // Skip if no package.json (not a real project)
+  if (!existsSync(join(cwd, 'package.json'))) return;
+
+  try {
+    setupProject(cwd);
+  } catch {
+    // Silent — don't break the command
+  }
+}
+
+// ─── Postinstall Entry Point ───
+
 /**
  * Auto-setup runs on npm postinstall.
  * Sets up hooks, CLAUDE.md injection, and storage directories.
@@ -28,18 +102,19 @@ function autoSetup(): void {
     return;
   }
 
-  // Handle global installs — no project context, but give helpful guidance
-  if (process.env.npm_config_global === 'true') {
+  const projectRoot = findProjectRoot();
+  const isGlobal = process.env.npm_config_global === 'true';
+  const hasProject = projectRoot !== '/' && existsSync(join(projectRoot, 'package.json'));
+
+  // Global install with no project context
+  if (isGlobal && !hasProject) {
     console.log(`\n  ${GREEN}Bookmark${RESET} installed globally.`);
-    console.log(`  Run ${CYAN}bookmark setup${RESET} in your project to configure.`);
-    console.log(`  Or: ${CYAN}claude plugin add github.com/tyroneross/bookmark${RESET}\n`);
+    console.log(`  Hooks will auto-configure when you use ${CYAN}/bookmark:activate${RESET} in a Claude Code session.\n`);
     return;
   }
 
-  const projectRoot = findProjectRoot();
-
-  // Verify we found a real project
-  if (projectRoot === '/' || !existsSync(join(projectRoot, 'package.json'))) {
+  // No project found
+  if (!hasProject) {
     return;
   }
 
@@ -49,40 +124,14 @@ function autoSetup(): void {
     if (pkg.name === '@tyroneross/bookmark') return;
   } catch { /* ignore */ }
 
+  // Global install FROM a project directory — configure that project
+  // Local install — configure the project
+
   console.log(`\n  ${GREEN}Bookmark${RESET} — Setting up context snapshots\n`);
 
-  const steps: string[] = [];
-
   try {
-    // 1. Ensure storage directories
-    const bookmarkPath = join(projectRoot, '.claude', 'bookmarks');
-    mkdirSync(join(bookmarkPath, 'snapshots'), { recursive: true });
-    mkdirSync(join(bookmarkPath, 'archive'), { recursive: true });
-    steps.push('Created .claude/bookmarks/ directories');
+    const steps = setupProject(projectRoot);
 
-    // 2. Configure hooks in settings.json
-    try {
-      configureHooks(projectRoot);
-      steps.push('Configured 4 hooks (PreCompact, SessionStart, UserPromptSubmit, Stop)');
-    } catch { /* silently skip */ }
-
-    // 3. Add .claude/bookmarks/ to .gitignore
-    try {
-      const added = injectGitignore(projectRoot);
-      if (added) {
-        steps.push('Added .claude/bookmarks/ to .gitignore');
-      }
-    } catch { /* silently skip */ }
-
-    // 4. Inject CLAUDE.md section
-    try {
-      const updated = injectClaudeMd(projectRoot);
-      if (updated) {
-        steps.push('Updated .claude/CLAUDE.md with bookmark docs');
-      }
-    } catch { /* silently skip */ }
-
-    // Print what happened
     for (const step of steps) {
       console.log(`  ${GREEN}+${RESET} ${step}`);
     }
@@ -95,14 +144,14 @@ function autoSetup(): void {
     console.log(`  ${DIM}  - Context restored when you start a new session${RESET}`);
     console.log(`  ${DIM}  - Use${RESET} ${CYAN}/bookmark:snapshot${RESET} ${DIM}for manual snapshots${RESET}`);
     console.log();
-    console.log(`  ${DIM}Run${RESET} ${CYAN}bookmark setup${RESET} ${DIM}for interactive configuration${RESET}`);
-    console.log();
 
   } catch (error) {
     // Don't fail npm install
     console.warn(`  Setup skipped: ${(error as Error).message}\n`);
   }
 }
+
+// ─── Inject Helpers ───
 
 function injectGitignore(cwd: string): boolean {
   const gitignorePath = join(cwd, '.gitignore');

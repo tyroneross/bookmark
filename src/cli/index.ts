@@ -16,6 +16,7 @@ import { shouldSnapshotByThreshold } from '../threshold/adaptive.js';
 import { quickEstimate } from '../transcript/estimator.js';
 import { loadConfig, getStoragePath, writeConfig } from '../config.js';
 import { configureHooks } from '../setup/configure-hooks.js';
+import { ensureProjectBootstrapped, setupProject } from '../setup/auto-setup.js';
 import type { HookInput, SnapshotTrigger } from '../types.js';
 
 const program = new Command();
@@ -39,6 +40,7 @@ program
     try {
       const hookInput = await readHookInput();
       const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      ensureProjectBootstrapped(cwd);
       let transcriptPath = opts.transcript ?? hookInput?.transcript_path;
       const sessionId = opts.sessionId ?? hookInput?.session_id;
 
@@ -81,6 +83,7 @@ program
     try {
       const hookInput = await readHookInput();
       const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      ensureProjectBootstrapped(cwd);
       const source = opts.sessionSource ?? hookInput?.source ?? 'startup';
 
       const result = restoreContext({
@@ -108,6 +111,7 @@ program
     try {
       const hookInput = await readHookInput();
       const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      ensureProjectBootstrapped(cwd);
       const transcriptPath = opts.transcript ?? hookInput?.transcript_path;
       const config = loadConfig(cwd);
       const storagePath = getStoragePath(cwd, config);
@@ -429,28 +433,18 @@ async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
     console.log('');
   }
 
-  // 1. Create storage directories
-  const config = loadConfig(cwd);
-  const storagePath = getStoragePath(cwd, config);
-  ensureStorageDirs(storagePath);
+  // Run core setup (dirs, hooks, gitignore, CLAUDE.md)
+  const steps = setupProject(cwd);
 
-  const steps: string[] = [];
-  steps.push('Created .claude/bookmarks/');
-
-  // 2. Configure hooks
-  try {
-    configureHooks(cwd);
-    steps.push('Configured 4 hooks (PreCompact, SessionStart, UserPromptSubmit, Stop)');
-  } catch { /* skip */ }
-
-  // 3. Write config
+  // Write user preferences
   writeConfig(cwd, { intervalMinutes, smartDefault });
   steps.push('Saved config to .claude/bookmarks/config.json');
 
-  // 4. Initialize state
-  const state = loadState(storagePath);
+  // Initialize state with user preferences
+  const sp = getStoragePath(cwd);
+  const state = loadState(sp);
   state.snapshot_interval_minutes = intervalMinutes;
-  saveState(storagePath, state);
+  saveState(sp, state);
 
   // Print summary
   console.log('Setup complete:');
