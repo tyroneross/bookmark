@@ -18,7 +18,6 @@ const DEFAULTS: BookmarkConfig = {
   archiveAfterDays: 30,
   snapshotOnSessionEnd: true,
   restoreOnSessionStart: true,
-  smartDefault: false,
   verboseLogging: false,
 };
 
@@ -52,9 +51,6 @@ export function loadConfig(cwd?: string): BookmarkConfig {
   if (process.env.BOOKMARK_CONTEXT_LIMIT) {
     config.contextLimitTokens = parseInt(process.env.BOOKMARK_CONTEXT_LIMIT, 10) || config.contextLimitTokens;
   }
-  if (process.env.BOOKMARK_SMART === 'true') {
-    config.smartDefault = true;
-  }
   if (process.env.BOOKMARK_VERBOSE === 'true') {
     config.verboseLogging = true;
   }
@@ -86,7 +82,6 @@ export function writeConfig(cwd: string, prefs: SetupPreferences): void {
   const merged = {
     ...existing,
     intervalMinutes: prefs.intervalMinutes,
-    smartDefault: prefs.smartDefault,
   };
 
   writeFileSync(configPath, JSON.stringify(merged, null, 2), 'utf-8');

@@ -13,19 +13,21 @@ export interface CaptureOptions {
   transcriptPath: string;
   cwd: string;
   sessionId?: string;
-  smart?: boolean;
 }
 
 /**
  * Full snapshot capture pipeline:
  * 1. Parse transcript
  * 2. Estimate token usage
- * 3. Extract decisions/status/files/errors
- * 4. Optionally enhance with LLM (--smart)
- * 5. Build snapshot object
- * 6. Store snapshot JSON
- * 7. Generate and write LATEST.md
- * 8. Update state
+ * 3. Extract decisions/status/files via pattern matching (fast, zero cost)
+ * 4. Build snapshot object
+ * 5. Store snapshot JSON
+ * 6. Write LATEST.md + trail-routed files (CONTEXT.md, decisions.md, files.md)
+ * 7. Update state
+ *
+ * No external API calls — the running Claude Code instance interprets the
+ * trail files on restore. Pattern matching captures the structured data;
+ * Claude (already running, already paid for) does the smart interpretation.
  */
 export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot> {
   const config = loadConfig(options.cwd);
@@ -41,17 +43,10 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
     charsPerToken: config.charsPerToken,
   });
 
-  // 3. Extract structural content (files, tools, sentiment — always reliable)
-  let extraction = extractFromEntries(entries, { projectPath: options.cwd });
+  // 3. Extract structural content via pattern matching (fast, zero external cost)
+  const extraction = extractFromEntries(entries, { projectPath: options.cwd });
 
-  // 4. LLM extraction for intent + progress (default on, uses claude CLI)
-  // Falls back to pattern matching if claude CLI unavailable
-  const skipLLM = options.smart === false;
-  if (!skipLLM) {
-    extraction = await extractWithLLM(extraction, entries);
-  }
-
-  // 5. Build snapshot
+  // 4. Build snapshot
   const snapshotId = generateSnapshotId();
   const priorSnapshot = loadLatestSnapshot(storagePath);
 
@@ -77,23 +72,20 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
     prior_snapshot_id: priorSnapshot?.snapshot_id,
   };
 
-  // 6. Store snapshot
+  // 5. Store snapshot
   storeSnapshot(storagePath, snapshot);
 
-  // 7. Generate LATEST.md + trail-routed files — only update if snapshot has actual content
+  // 6. Write LATEST.md + trail-routed files — only update if snapshot has content
   const hasContent = snapshot.files_changed.length > 0
     || snapshot.decisions.length > 0
-    || snapshot.open_items.length > 0
-    || (snapshot.intent !== 'Unknown' && snapshot.intent !== undefined);
+    || snapshot.open_items.length > 0;
   if (hasContent || snapshot.trigger === 'manual') {
     const markdown = compressToMarkdown(snapshot);
     writeLatestMd(storagePath, markdown);
-
-    // Write trail-routed memory files (CONTEXT.md + trails/)
     writeTrails(storagePath, snapshot);
   }
 
-  // 8. Update state
+  // 7. Update state
   const updatedState = updateSnapshotTime(state);
   saveState(storagePath, updatedState);
 
@@ -106,101 +98,4 @@ function generateSnapshotId(): string {
   const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
   const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
   return `SNAP_${date}_${time}`;
-}
-
-/**
- * Extract intent, progress, decisions, and open items using Claude CLI.
- * Uses `claude -p` — no API key needed, uses the user's existing Claude Code auth.
- * Falls back to ANTHROPIC_API_KEY direct API call, then to pattern matching.
- *
- * ROI: spends ~200 tokens to save 10K-100K tokens of context that would be lost.
- */
-async function extractWithLLM(
-  extraction: ReturnType<typeof extractFromEntries>,
-  entries: import('../types.js').TranscriptEntry[]
-): Promise<ReturnType<typeof extractFromEntries>> {
-  // Build a compressed transcript excerpt — user + assistant messages only
-  const recentEntries = entries.slice(-60);
-  const transcript = recentEntries
-    .filter(e => e.type === 'assistant' || e.type === 'user')
-    .map(e => `[${e.type}]: ${typeof e.content === 'string' ? e.content.slice(0, 300) : ''}`)
-    .join('\n')
-    .slice(-5000);
-
-  const prompt = `You are a context extraction tool. Analyze this coding session transcript and respond ONLY with a JSON object. No markdown, no explanation.
-
-Extract:
-1. intent: What is the user trying to accomplish? (1 sentence)
-2. progress: How far along are they? What's done vs remaining? (1-2 sentences)
-3. current_status: What was happening most recently? (1 sentence)
-4. decisions: Key technical decisions made (max 4, each 1 sentence)
-5. open_items: Remaining work items (max 4, with priority high/medium/low)
-
-Transcript:
-${transcript}
-
-JSON response:`;
-
-  // Use ANTHROPIC_API_KEY with Haiku (~$0.001/snapshot)
-  // Most Claude Code users have this set. Clean, no hook recursion.
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (apiKey) {
-    try {
-      const { default: Anthropic } = await import('@anthropic-ai/sdk');
-      const client = new Anthropic({ apiKey });
-      const response = await client.messages.create({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 500,
-        messages: [{ role: 'user', content: prompt }],
-      });
-      const text = response.content[0]?.type === 'text' ? response.content[0].text : '';
-      const parsed = parseLLMResponse(text);
-      if (parsed) return { ...extraction, ...parsed };
-    } catch {
-      // API call failed — fall back to pattern matching
-    }
-  }
-
-  // Fallback: pattern matching (already in extraction)
-  return extraction;
-}
-
-function parseLLMResponse(raw: string): Partial<ReturnType<typeof extractFromEntries>> | null {
-  try {
-    // Handle claude CLI JSON output format (has a result field)
-    let text = raw;
-    try {
-      const cliOutput = JSON.parse(raw);
-      if (cliOutput.result) text = cliOutput.result;
-      else if (typeof cliOutput === 'string') text = cliOutput;
-    } catch {
-      // Not JSON wrapper, use raw text
-    }
-
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return null;
-
-    const data = JSON.parse(jsonMatch[0]);
-    const result: Partial<ReturnType<typeof extractFromEntries>> = {};
-
-    if (data.intent) result.intent = data.intent;
-    if (data.progress) result.progress = data.progress;
-    if (data.current_status) result.current_status = data.current_status;
-    if (data.decisions?.length) {
-      result.decisions = data.decisions.map((d: { description?: string; rationale?: string }) => ({
-        description: d.description ?? d,
-        rationale: d.rationale,
-      }));
-    }
-    if (data.open_items?.length) {
-      result.open_items = data.open_items.map((item: { description?: string; priority?: string }) => ({
-        description: item.description ?? item,
-        priority: item.priority ?? 'medium',
-      }));
-    }
-
-    return result;
-  } catch {
-    return null;
-  }
 }

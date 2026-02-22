@@ -8,28 +8,44 @@ Bookmark automatically captures, compresses, and restores session context so you
 
 **Automatic hooks** (zero context window tax):
 - **PreCompact** — Snapshots before compaction (async, external process)
-- **SessionStart** — Restores context from latest snapshot
+- **SessionStart** — Restores context from CONTEXT.md (trailhead)
 - **UserPromptSubmit** — Checks time/threshold intervals (fast no-op when nothing triggers)
 - **Stop** — Final snapshot before session ends
+
+**Trail-routed memory** — Context stored in a hierarchy of navigable files:
+- `CONTEXT.md` — Compact trailhead (~400 tokens), always restored on session start
+- `trails/decisions.md` — Timestamped decision chain, newer overrides older on same topic
+- `trails/files.md` — Cumulative file activity sorted by impact
+
+**No external API calls** — You (Claude Code) are the interpreter. Pattern matching captures structured data during snapshots. You interpret the trails on restore.
 
 **Adaptive thresholds** — Snapshots trigger earlier as compaction happens more:
 - 1st compaction: snapshot at 20% remaining
 - 2nd: 30% remaining
 - 3rd+: 40-50% remaining
 
-**Time-based intervals** — Default every 20 minutes (configurable).
-
 ## Storage Location
 
 All data lives in `<project>/.claude/bookmarks/`:
 ```
 .claude/bookmarks/
-├── LATEST.md       ← Read this first (hot context, <150 lines)
+├── CONTEXT.md      ← Trailhead — read this on restore (~400 tokens)
+├── trails/
+│   ├── decisions.md ← Follow for decision history
+│   └── files.md     ← Follow for file change details
+├── LATEST.md       ← Flat markdown backup
 ├── index.json      ← Snapshot index
 ├── state.json      ← Plugin state
 ├── snapshots/      ← Full snapshot files (SNAP_*.json)
 └── archive/        ← Old snapshots
 ```
+
+## How to Use Trails
+
+When CONTEXT.md is restored, it contains routing pointers to trail files. If you need more detail:
+1. Read the trailhead (CONTEXT.md) — usually enough to resume
+2. Follow `trails/decisions.md` if you need decision history or rationale
+3. Follow `trails/files.md` if you need to know what files were modified and how much
 
 ## Available Commands
 
@@ -39,31 +55,5 @@ All data lives in `<project>/.claude/bookmarks/`:
 | `/bookmark:restore` | Restore from latest or specific snapshot |
 | `/bookmark:status` | Show snapshot inventory and stats |
 | `/bookmark:list` | List all snapshots |
-
-## CLI Quick Reference
-
-```bash
-npx @tyroneross/bookmark status          # Stats
-npx @tyroneross/bookmark list            # List snapshots
-npx @tyroneross/bookmark show --latest   # Show latest snapshot
-npx @tyroneross/bookmark show <SNAP_ID>  # Show specific snapshot
-npx @tyroneross/bookmark config          # Show/set configuration
-npx @tyroneross/bookmark init            # Initialize in project
-```
-
-## What Gets Captured
-
-Each snapshot extracts from the transcript:
-- **Current status** — What was being worked on
-- **Decisions made** — Key choices with rationale
-- **Open items** — TODOs with priority
-- **Unknowns/blockers** — Uncertainties and blockers
-- **Files changed** — With operation types
-- **Errors encountered** — Resolved vs unresolved
-- **Tool usage summary** — Aggregate tool call counts
-
-## Smart Mode
-
-Pass `--smart` to use Claude Haiku for higher-quality extraction (~$0.001/snapshot). Requires `ANTHROPIC_API_KEY`.
 
 *bookmark — context snapshot*

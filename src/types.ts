@@ -192,7 +192,7 @@ export interface BookmarkConfig {
   archiveAfterDays: number;
   snapshotOnSessionEnd: boolean;
   restoreOnSessionStart: boolean;
-  smartDefault: boolean;
+
   verboseLogging: boolean;
 }
 
@@ -200,5 +200,5 @@ export interface BookmarkConfig {
 
 export interface SetupPreferences {
   intervalMinutes: number;
-  smartDefault: boolean;
+
 }

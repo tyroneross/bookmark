@@ -32,7 +32,6 @@ program
   .command('snapshot')
   .description('Capture a context snapshot')
   .option('--trigger <type>', 'Trigger type: pre_compact|time_interval|manual|session_end', 'manual')
-  .option('--smart', 'Use Claude Haiku for enhanced extraction')
   .option('--transcript <path>', 'Path to transcript JSONL')
   .option('--session-id <id>', 'Session ID')
   .option('--cwd <path>', 'Working directory')
@@ -58,7 +57,6 @@ program
         transcriptPath,
         cwd,
         sessionId,
-        smart: opts.smart,
       });
 
       console.log(`Snapshot captured: ${snapshot.snapshot_id}`);
@@ -263,8 +261,6 @@ program
   .command('config')
   .description('Show or set configuration')
   .option('--interval <minutes>', 'Set time-based interval')
-  .option('--smart-default', 'Enable LLM-enhanced extraction by default')
-  .option('--no-smart-default', 'Disable LLM-enhanced extraction')
   .option('--cwd <path>', 'Working directory')
   .action((opts) => {
     const cwd = opts.cwd ?? process.cwd();
@@ -286,13 +282,12 @@ program
     console.log(`  Interval:           ${config.intervalMinutes} minutes`);
     console.log(`  Thresholds:         ${config.thresholds.map(t => `${Math.round(t * 100)}%`).join(', ')}`);
     console.log(`  Context limit:      ${config.contextLimitTokens.toLocaleString()} tokens`);
-    console.log(`  Smart default:      ${config.smartDefault}`);
     console.log(`  Max snapshots:      ${config.maxActiveSnapshots}`);
     console.log(`  Archive after:      ${config.archiveAfterDays} days`);
     console.log('');
     console.log('Environment overrides:');
     console.log('  BOOKMARK_INTERVAL, BOOKMARK_THRESHOLD, BOOKMARK_STORAGE_PATH');
-    console.log('  BOOKMARK_CONTEXT_LIMIT, BOOKMARK_SMART, ANTHROPIC_API_KEY');
+    console.log('  BOOKMARK_CONTEXT_LIMIT, BOOKMARK_VERBOSE');
     console.log('');
   });
 
@@ -426,7 +421,6 @@ function askQuestion(question: string): Promise<string> {
  */
 async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
   let intervalMinutes = 20;
-  let smartDefault = false;
 
   console.log('');
   console.log(`${BOLD}Bookmark — Context Snapshot Setup${RESET}`);
@@ -445,28 +439,13 @@ async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
     const intervalMap: Record<string, number> = { '1': 10, '2': 15, '3': 20, '4': 30 };
     intervalMinutes = intervalMap[intervalAnswer] ?? 20;
     console.log('');
-
-    // Prompt for smart mode
-    const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
-    console.log('Smart mode (uses Claude Haiku for better extraction, ~$0.001/snapshot)?');
-    if (hasApiKey) {
-      console.log(`  ${GREEN}ANTHROPIC_API_KEY detected.${RESET}`);
-    } else {
-      console.log(`  ${DIM}No ANTHROPIC_API_KEY found — smart mode requires it.${RESET}`);
-    }
-    console.log('  1) Enable smart mode');
-    console.log(`  2) Pattern-matching only ${DIM}(recommended)${RESET}`);
-    console.log('');
-    const smartAnswer = await askQuestion(`${DIM}> ${RESET}`);
-    smartDefault = smartAnswer === '1';
-    console.log('');
   }
 
   // Run core setup (dirs, hooks, gitignore, CLAUDE.md)
   const steps = setupProject(cwd);
 
   // Write user preferences
-  writeConfig(cwd, { intervalMinutes, smartDefault });
+  writeConfig(cwd, { intervalMinutes });
   steps.push('Saved config to .claude/bookmarks/config.json');
 
   // Initialize state with user preferences
@@ -485,7 +464,6 @@ async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
   console.log('Defaults:');
   console.log(`  Interval:     ${intervalMinutes} minutes`);
   console.log(`  Thresholds:   20% → 30% → 40% → 50% (adaptive)`);
-  console.log(`  Smart mode:   ${smartDefault ? 'on' : 'off'}`);
   console.log('');
   console.log(`${GREEN}Ready.${RESET} Start a Claude Code session — snapshots will be captured automatically.`);
   console.log('');
