@@ -167,3 +167,28 @@ export function getSnapshotCount(storagePath: string): number {
     return 0;
   }
 }
+
+/**
+ * Walk the snapshot chain via prior_snapshot_id links.
+ * Returns snapshots in chronological order (oldest first).
+ * Caps at maxDepth to prevent runaway chains.
+ */
+export function loadSnapshotChain(storagePath: string, maxDepth = 5): Snapshot[] {
+  const latest = loadLatestSnapshot(storagePath);
+  if (!latest) return [];
+
+  const chain: Snapshot[] = [latest];
+  const seen = new Set<string>([latest.snapshot_id]);
+  let current = latest;
+
+  while (current.prior_snapshot_id && chain.length < maxDepth) {
+    if (seen.has(current.prior_snapshot_id)) break; // Prevent cycles
+    const prior = loadSnapshot(storagePath, current.prior_snapshot_id);
+    if (!prior) break;
+    seen.add(prior.snapshot_id);
+    chain.push(prior);
+    current = prior;
+  }
+
+  return chain.reverse(); // Chronological: oldest first
+}

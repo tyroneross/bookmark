@@ -3,6 +3,7 @@ import { estimateFromTranscript } from '../transcript/estimator.js';
 import { extractFromEntries } from '../transcript/extractor.js';
 import { storeSnapshot, writeLatestMd, loadLatestSnapshot } from './storage.js';
 import { compressToMarkdown } from './compress.js';
+import { writeTrails } from '../trails/writer.js';
 import { loadState, saveState, updateSnapshotTime } from '../threshold/state.js';
 import { loadConfig, getStoragePath } from '../config.js';
 import type { Snapshot, SnapshotTrigger } from '../types.js';
@@ -79,7 +80,7 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
   // 6. Store snapshot
   storeSnapshot(storagePath, snapshot);
 
-  // 7. Generate LATEST.md — only update if snapshot has actual content
+  // 7. Generate LATEST.md + trail-routed files — only update if snapshot has actual content
   const hasContent = snapshot.files_changed.length > 0
     || snapshot.decisions.length > 0
     || snapshot.open_items.length > 0
@@ -87,6 +88,9 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
   if (hasContent || snapshot.trigger === 'manual') {
     const markdown = compressToMarkdown(snapshot);
     writeLatestMd(storagePath, markdown);
+
+    // Write trail-routed memory files (CONTEXT.md + trails/)
+    writeTrails(storagePath, snapshot);
   }
 
   // 8. Update state

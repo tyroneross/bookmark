@@ -79,19 +79,17 @@ function extractDecisions(entries: TranscriptEntry[]): Decision[] {
   const decisions: Decision[] = [];
   const seen = new Set<string>();
 
-  // Only look at entries that are clearly decision-oriented
-  // Require BOTH a decision keyword AND a rationale keyword in the same message
+  // Decisions come from assistant messages where the assistant explicitly
+  // states a choice. Require strong decision language + rationale.
   for (const entry of entries) {
     if (entry.type !== 'assistant') continue;
     const text = getEntryText(entry);
-    if (!text || text.length < 30) continue;
-    // Skip long blocks (research output, code)
-    if (text.length > 2000) continue;
-    // Skip messages with markdown headers (formatted output, not decisions)
-    if (/^#{1,3}\s/m.test(text)) continue;
+    if (!text || text.length < 30 || text.length > 2000) continue;
+    // Skip formatted output (markdown headers, code blocks)
+    if (/^#{1,3}\s/m.test(text) || /^```/m.test(text)) continue;
 
-    // Must have a decision keyword
-    if (!DECISION_PATTERNS[0].test(text)) continue;
+    // Must have BOTH a decision keyword AND a rationale keyword
+    if (!DECISION_PATTERNS[0].test(text) || !DECISION_PATTERNS[1].test(text)) continue;
 
     const sentences = text.split(/[.!?\n]/).filter(s => s.trim().length > 25);
     for (const sentence of sentences) {
@@ -99,6 +97,9 @@ function extractDecisions(entries: TranscriptEntry[]): Decision[] {
         const clean = sentence.trim().slice(0, 150);
         if (DECISION_NOISE.some(p => p.test(clean))) continue;
         if (clean.split(/\s+/).length < 6) continue;
+        // Skip bug descriptions, status reports, code artifacts
+        if (/^\*\*/.test(clean)) continue;
+        if (/[/\\](?:b|i|s)\b/.test(clean)) continue;
         const key = clean.toLowerCase().slice(0, 50);
         if (!seen.has(key)) {
           seen.add(key);
@@ -111,7 +112,7 @@ function extractDecisions(entries: TranscriptEntry[]): Decision[] {
   return decisions.slice(0, 6);
 }
 
-/** Fragments that look like open items but are just conversational narration */
+/** Fragments that look like open items but are just conversational narration or artifact */
 const OPEN_ITEM_NOISE = [
   /^let me /i,
   /^I'll /i,
@@ -126,32 +127,58 @@ const OPEN_ITEM_NOISE = [
   /^you'll need to /i,
   /^no need to /i,
   /^there's no need /i,
+  /^\d+→/,                    // Line-number prefixed (from file reads)
+  /^\d+\|/,                   // Alt line-number format
+  /^- \[ \] (?:\d+→|>)/,     // Checkbox with line prefix
+  /^> /,                      // Blockquote content
+  /^SNAP_/,                   // Snapshot IDs
+  /^\|/,                      // Table rows
+  /^```/,                     // Code blocks
+  /^\*bookmark/,              // Bookmark signature
 ];
 
 function extractOpenItems(entries: TranscriptEntry[]): OpenItem[] {
   const items: OpenItem[] = [];
   const seen = new Set<string>();
 
-  // Process in reverse — more recent items are more relevant
-  // Only look at last 30% of entries
+  // Strategy: user messages are the source of truth for "what needs to be done"
+  // Assistant messages only contribute if they have explicit TODO/FIXME markers
   const startIdx = Math.floor(entries.length * 0.7);
   for (let i = entries.length - 1; i >= startIdx; i--) {
     const entry = entries[i];
-    // Accept both assistant and user messages for TODOs
     if (entry.type !== 'assistant' && entry.type !== 'user') continue;
     const text = getEntryText(entry);
     if (!text || text.length > 2000) continue;
-    // Skip formatted research/output blocks
-    if (/^#{1,3}\s/m.test(text)) continue;
 
+    // For assistant messages: only extract literal TODO/FIXME markers
+    // Must be at start of line or after whitespace, not inside backticks/quotes
+    if (entry.type === 'assistant') {
+      // Strip backtick-quoted content before matching
+      const stripped = text.replace(/`[^`]*`/g, '').replace(/"[^"]*"/g, '');
+      const todoMatches = stripped.match(/^[ \t]*(?:\/\/|#|--|%%)?\s*(?:TODO|FIXME):\s+(.{10,100})/gm);
+      if (todoMatches) {
+        for (const match of todoMatches.slice(0, 2)) {
+          const clean = match.trim();
+          if (isCodeArtifact(clean)) continue;
+          const key = clean.toLowerCase().slice(0, 50);
+          if (!seen.has(key)) {
+            seen.add(key);
+            items.push({ description: clean, priority: 'medium' });
+          }
+        }
+      }
+      continue; // Skip all other assistant patterns — too noisy
+    }
+
+    // For user messages: use pattern matching but with strict code-artifact filtering
     const sentences = text.split(/[.!?\n]/).filter(s => s.trim().length > 25);
     for (const sentence of sentences) {
       if (OPEN_ITEM_PATTERNS.some(p => p.test(sentence))) {
         const clean = sentence.trim().slice(0, 150);
         if (OPEN_ITEM_NOISE.some(p => p.test(clean))) continue;
         if (clean.split(/\s+/).length < 5) continue;
-        // Skip items that look like bullet points from research output
-        if (/^\*\*/.test(clean) || /^-\s+\*\*/.test(clean)) continue;
+        // Hard filter: skip anything that looks like code, regex, or technical artifact
+        if (isCodeArtifact(clean)) continue;
         const key = clean.toLowerCase().slice(0, 50);
         if (!seen.has(key)) {
           seen.add(key);
@@ -364,6 +391,21 @@ function extractCurrentStatus(entries: TranscriptEntry[]): string {
 function getEntryText(entry: TranscriptEntry): string {
   if (typeof entry.content === 'string') return entry.content;
   return '';
+}
+
+/** Detect if text is a code artifact rather than natural language */
+function isCodeArtifact(text: string): boolean {
+  // Regex patterns (contains /pattern/ or \b)
+  if (/[/](?:[a-z]+\||\\.|\^|\$|\(|\[)/.test(text)) return true;
+  // Variable/function syntax
+  if (/(?:const|let|var|function|=>|===|!==)\s/.test(text)) return true;
+  // Contains backticks (inline code)
+  if (/`[^`]+`/.test(text) && text.indexOf('`') < 20) return true;
+  // Pipe-delimited (regex alternation or table)
+  if ((text.match(/\|/g) ?? []).length >= 2) return true;
+  // Starts with punctuation that indicates code output
+  if (/^[:\-*#>]/.test(text.trim())) return true;
+  return false;
 }
 
 function inferPriority(text: string): 'high' | 'medium' | 'low' {
