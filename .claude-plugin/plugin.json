@@ -1,0 +1,13 @@
+{
+  "name": "bookmark",
+  "version": "0.1.0",
+  "description": "Context snapshots for Claude Code — session continuity across compactions and terminals",
+  "author": { "name": "Tyrone Ross" },
+  "homepage": "https://github.com/tyroneross/bookmark",
+  "repository": "https://github.com/tyroneross/bookmark",
+  "license": "MIT",
+  "keywords": ["context", "snapshots", "session-continuity", "compaction", "memory"],
+  "hooks": "../hooks/hooks.json",
+  "skills": "../skills/",
+  "agents": "../agents/"
+}

@@ -1,0 +1,15 @@
+{
+  "title": "Bookmark — Context Snapshots",
+  "tagline": "Never lose session context again",
+  "category": "developer-tools",
+  "icon": "bookmark",
+  "screenshots": [],
+  "features": [
+    "Automatic snapshots before compaction",
+    "Adaptive threshold system",
+    "Time-based interval snapshots",
+    "Zero context window tax",
+    "Session restoration on startup",
+    "Optional LLM-enhanced extraction"
+  ]
+}

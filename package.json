@@ -1,0 +1,77 @@
+{
+  "name": "@tyroneross/bookmark",
+  "version": "0.1.0",
+  "description": "Context snapshots for Claude Code — session continuity across compactions and terminals",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "bookmark": "./dist/cli/index.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./setup": {
+      "types": "./dist/setup/auto-setup.d.ts",
+      "import": "./dist/setup/auto-setup.js"
+    }
+  },
+  "files": [
+    "dist",
+    "commands",
+    "skills",
+    "hooks",
+    "agents",
+    ".claude-plugin",
+    "scripts/install-plugin.sh",
+    "CLAUDE.md",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc && npm run build:fixshebang",
+    "build:fixshebang": "node -e \"const fs=require('fs');const f='dist/cli/index.js';let c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!')){c='#!/usr/bin/env node\\n'+c;fs.writeFileSync(f,c);}\"",
+    "dev": "tsc --watch",
+    "start": "node dist/cli/index.js",
+    "test": "vitest run",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "npm run clean && npm run build",
+    "postinstall": "node dist/setup/auto-setup.js || true",
+    "install-plugin": "bash scripts/install-plugin.sh --global"
+  },
+  "keywords": [
+    "claude-code",
+    "context",
+    "snapshots",
+    "session-continuity",
+    "compaction",
+    "memory",
+    "devtools"
+  ],
+  "author": "Tyrone Ross",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tyroneross/bookmark"
+  },
+  "homepage": "https://github.com/tyroneross/bookmark#readme",
+  "bugs": {
+    "url": "https://github.com/tyroneross/bookmark/issues"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "glob": "^13.0.0"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.3.0",
+    "vitest": "^4.0.0"
+  }
+}
