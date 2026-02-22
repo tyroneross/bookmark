@@ -39,10 +39,9 @@ export function restoreContext(options: RestoreOptions): HookOutput {
     // First run — tell Claude that bookmark is active
     return {
       systemMessage:
-        'Bookmark (context snapshots) is active for this project. ' +
-        'Snapshots will be captured automatically before compaction, ' +
-        'on 20-minute intervals, and at session end. ' +
-        'Use /bookmark:status to check inventory.',
+        '[Bookmark: Active — no snapshots yet. Snapshots will be captured automatically ' +
+        'before compaction, on 20-minute intervals, and at session end.]\n\n' +
+        'Briefly let the user know that Bookmark is active and will start capturing context snapshots automatically.',
     };
   }
 
@@ -72,6 +71,10 @@ export function restoreContext(options: RestoreOptions): HookOutput {
 
 function buildRestorationMessage(latestMd: string, snapshotCount: number): string {
   const lines: string[] = [];
+  lines.push('[Bookmark: Context recovered from previous session]');
+  lines.push('');
+  lines.push('Briefly notify the user that their prior session context has been recovered by Bookmark.');
+  lines.push('');
   lines.push('## Prior Session Context (Bookmark)');
   lines.push('');
   lines.push(latestMd);
