@@ -66,7 +66,15 @@ function autoSetup(): void {
       steps.push('Configured 4 hooks (PreCompact, SessionStart, UserPromptSubmit, Stop)');
     } catch { /* silently skip */ }
 
-    // 3. Inject CLAUDE.md section
+    // 3. Add .claude/bookmarks/ to .gitignore
+    try {
+      const added = injectGitignore(projectRoot);
+      if (added) {
+        steps.push('Added .claude/bookmarks/ to .gitignore');
+      }
+    } catch { /* silently skip */ }
+
+    // 4. Inject CLAUDE.md section
     try {
       const updated = injectClaudeMd(projectRoot);
       if (updated) {
@@ -94,6 +102,22 @@ function autoSetup(): void {
     // Don't fail npm install
     console.warn(`  Setup skipped: ${(error as Error).message}\n`);
   }
+}
+
+function injectGitignore(cwd: string): boolean {
+  const gitignorePath = join(cwd, '.gitignore');
+  const entry = '.claude/bookmarks/';
+
+  let content = '';
+  if (existsSync(gitignorePath)) {
+    content = readFileSync(gitignorePath, 'utf-8');
+    if (content.includes(entry)) return false;
+    if (!content.endsWith('\n')) content += '\n';
+  }
+
+  content += `\n# Bookmark snapshot data\n${entry}\n`;
+  writeFileSync(gitignorePath, content, 'utf-8');
+  return true;
 }
 
 function injectClaudeMd(cwd: string): boolean {
