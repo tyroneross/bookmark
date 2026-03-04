@@ -32,7 +32,7 @@ export function writeTrails(storagePath: string, snapshot: Snapshot): void {
 
 interface TrailStats {
   decisionStats: { active: number; superseded: number };
-  fileStats: { count: number; totalLines: number };
+  fileStats: { count: number; totalLines: number; topFiles: Array<{ path: string; summary?: string }> };
 }
 
 function writeContextMd(
@@ -74,6 +74,16 @@ function writeContextMd(
   }
   if (stats.fileStats.count > 0) {
     lines.push(`- \`${trailsDir}/files.md\` — ${stats.fileStats.count} files, ~${stats.fileStats.totalLines} lines changed`);
+  }
+
+  // Key structural changes — avoids needing to re-read files after restore
+  if (stats.fileStats.topFiles.length > 0) {
+    lines.push('');
+    lines.push('**Key changes:**');
+    for (const f of stats.fileStats.topFiles) {
+      const shortPath = f.path.split('/').slice(-2).join('/');
+      lines.push(`- \`${shortPath}\`: ${f.summary}`);
+    }
   }
 
   lines.push('');
@@ -266,7 +276,7 @@ function deduplicateDecisions(entries: DecisionEntry[]): DecisionEntry[] {
 function writeFileTrail(
   trailsDir: string,
   snapshot: Snapshot
-): { count: number; totalLines: number } {
+): { count: number; totalLines: number; topFiles: Array<{ path: string; summary?: string }> } {
   const trailPath = join(trailsDir, 'files.md');
 
   // Load existing file entries and merge with new
@@ -283,11 +293,23 @@ function writeFileTrail(
       existing.operations = [...ops];
       // Use max, not sum — same transcript produces same totals across snapshots
       existing.lines_changed = Math.max(existing.lines_changed ?? 0, f.lines_changed ?? 0);
+      // Merge summaries: combine unique structural hints
+      if (f.summary) {
+        if (existing.summary) {
+          const existingHints = new Set(existing.summary.split(', '));
+          const newHints = f.summary.split(', ');
+          for (const h of newHints) existingHints.add(h);
+          existing.summary = [...existingHints].slice(0, 6).join(', ');
+        } else {
+          existing.summary = f.summary;
+        }
+      }
     } else {
       fileMap.set(shortPath, {
         path: shortPath,
         operations: [...f.operations],
         lines_changed: f.lines_changed,
+        summary: f.summary,
       });
     }
   }
@@ -306,12 +328,22 @@ function writeFileTrail(
 
   for (const f of files) {
     const lc = f.lines_changed ? ` ~${f.lines_changed}L` : '';
-    lines.push(`- \`${f.path}\` (${f.operations.join('/')}${lc})`);
+    let line = `- \`${f.path}\` (${f.operations.join('/')}${lc})`;
+    if (f.summary) {
+      line += ` — ${f.summary}`;
+    }
+    lines.push(line);
   }
 
   writeFileSync(trailPath, lines.join('\n'), 'utf-8');
 
-  return { count: files.length, totalLines };
+  // Return top files with summaries for CONTEXT.md
+  const topFiles = files
+    .filter(f => f.summary)
+    .slice(0, 5)
+    .map(f => ({ path: f.path, summary: f.summary }));
+
+  return { count: files.length, totalLines, topFiles };
 }
 
 function loadFileEntries(trailPath: string): Map<string, FileActivity> {
@@ -322,7 +354,7 @@ function loadFileEntries(trailPath: string): Map<string, FileActivity> {
     const fileMap = new Map<string, FileActivity>();
 
     for (const line of content.split('\n')) {
-      // Parse: - `src/foo.ts` (edit/write ~123L)
+      // Parse: - `src/foo.ts` (edit/write ~123L) — +fn registerPlugin, +fn ensurePluginSymlink
       const match = line.match(/^- `(.+?)` \(([^)]+)\)/);
       if (match) {
         const path = match[1];
@@ -330,7 +362,10 @@ function loadFileEntries(trailPath: string): Map<string, FileActivity> {
         const ops = opsStr.replace(/\s*~\d+L/, '').split('/') as FileActivity['operations'];
         const lcMatch = opsStr.match(/~(\d+)L/);
         const linesChanged = lcMatch ? parseInt(lcMatch[1], 10) : undefined;
-        fileMap.set(path, { path, operations: ops, lines_changed: linesChanged });
+        // Extract summary after " — " if present
+        const summaryMatch = line.match(/\) — (.+)$/);
+        const summary = summaryMatch ? summaryMatch[1] : undefined;
+        fileMap.set(path, { path, operations: ops, lines_changed: linesChanged, summary });
       }
     }
 

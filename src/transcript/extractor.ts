@@ -228,6 +228,7 @@ function extractUnknowns(entries: TranscriptEntry[]): string[] {
 function extractFilesChanged(entries: TranscriptEntry[], projectPath?: string): FileActivity[] {
   const fileMap = new Map<string, Set<FileOperation>>();
   const fileLinesChanged = new Map<string, number>();
+  const fileStructuralChanges = new Map<string, Set<string>>();
 
   for (const entry of entries) {
     if (entry.type === 'tool_use') {
@@ -250,6 +251,13 @@ function extractFilesChanged(entries: TranscriptEntry[], projectPath?: string): 
           const linesRemoved = oldStr ? oldStr.split('\n').length : 0;
           const delta = Math.abs(linesAdded - linesRemoved) + Math.min(linesAdded, linesRemoved);
           fileLinesChanged.set(filePath, (fileLinesChanged.get(filePath) ?? 0) + delta);
+
+          // Extract structural changes from edit content
+          const changes = fileStructuralChanges.get(filePath) ?? new Set();
+          extractStructuralHints(newStr, oldStr, changes);
+          if (changes.size > 0) {
+            fileStructuralChanges.set(filePath, changes);
+          }
         }
       }
 
@@ -277,14 +285,76 @@ function extractFilesChanged(entries: TranscriptEntry[], projectPath?: string): 
 
   const result: FileActivity[] = [];
   for (const [path, ops] of fileMap) {
+    const changes = fileStructuralChanges.get(path);
+    const summary = changes && changes.size > 0
+      ? [...changes].slice(0, 4).join(', ')
+      : undefined;
     result.push({
       path,
       operations: [...ops],
       lines_changed: fileLinesChanged.get(path) ?? 0,
+      summary,
     });
   }
 
   return result.slice(0, 20); // maxFilesTracked
+}
+
+/**
+ * Extract lightweight structural hints from edit operations.
+ * Identifies added/modified functions, classes, exports, imports, types.
+ * Keeps only the name, not the full signature — compact for trail files.
+ */
+function extractStructuralHints(newStr: string, oldStr: string, changes: Set<string>): void {
+  if (!newStr && !oldStr) return;
+
+  const newLines = new Set(newStr.split('\n').map(l => l.trim()));
+  const oldLines = new Set(oldStr.split('\n').map(l => l.trim()));
+
+  // Patterns that indicate structural elements (name-extracting)
+  const STRUCTURAL_PATTERNS: Array<{ pattern: RegExp; prefix: string }> = [
+    { pattern: /^export\s+(?:async\s+)?function\s+(\w+)/, prefix: '+fn' },
+    { pattern: /^(?:async\s+)?function\s+(\w+)/, prefix: '+fn' },
+    { pattern: /^export\s+(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(/, prefix: '+fn' },
+    { pattern: /^(?:const|let)\s+(\w+)\s*=\s*(?:async\s*)?\(/, prefix: '+fn' },
+    { pattern: /^export\s+class\s+(\w+)/, prefix: '+class' },
+    { pattern: /^class\s+(\w+)/, prefix: '+class' },
+    { pattern: /^export\s+interface\s+(\w+)/, prefix: '+interface' },
+    { pattern: /^interface\s+(\w+)/, prefix: '+interface' },
+    { pattern: /^export\s+type\s+(\w+)/, prefix: '+type' },
+    { pattern: /^type\s+(\w+)/, prefix: '+type' },
+    { pattern: /^import\s+.*from\s+['"]([^'"]+)['"]/, prefix: '+import' },
+  ];
+
+  // Check new lines for structural elements not in old
+  for (const line of newLines) {
+    if (oldLines.has(line)) continue; // unchanged line
+    for (const { pattern, prefix } of STRUCTURAL_PATTERNS) {
+      const match = line.match(pattern);
+      if (match) {
+        changes.add(`${prefix} ${match[1]}`);
+        break;
+      }
+    }
+  }
+
+  // Check for removals (in old but not in new)
+  if (oldStr) {
+    for (const line of oldLines) {
+      if (newLines.has(line)) continue;
+      for (const { pattern, prefix } of STRUCTURAL_PATTERNS) {
+        const match = line.match(pattern);
+        if (match) {
+          const removePrefix = prefix.replace('+', '-');
+          // Only mark as removed if not also added (modification = both old and new have it)
+          if (!changes.has(`${prefix} ${match[1]}`)) {
+            changes.add(`${removePrefix} ${match[1]}`);
+          }
+          break;
+        }
+      }
+    }
+  }
 }
 
 /** Strings that look like errors but aren't */
