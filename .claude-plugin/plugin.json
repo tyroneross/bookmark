@@ -9,5 +9,6 @@
   "keywords": ["context", "snapshots", "session-continuity", "compaction", "memory"],
   "hooks": "../hooks/hooks.json",
   "skills": "../skills/",
-  "agents": "../agents/"
+  "agents": "../agents/",
+  "mcpServers": "../.mcp.json"
 }

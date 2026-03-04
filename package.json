@@ -25,6 +25,7 @@
     "hooks",
     "agents",
     ".claude-plugin",
+    ".mcp.json",
     "scripts/install-plugin.sh",
     "CLAUDE.md",
     "README.md"
@@ -38,7 +39,8 @@
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "postinstall": "node dist/setup/auto-setup.js || true",
-    "install-plugin": "bash scripts/install-plugin.sh --global"
+    "install-plugin": "bash scripts/install-plugin.sh --global",
+    "mcp": "node dist/mcp/server.js"
   },
   "keywords": [
     "claude-code",
