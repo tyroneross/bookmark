@@ -1,7 +1,6 @@
 ---
 description: "Take a manual context snapshot"
 allowed-tools: Bash
-argument-hint: "[--smart]"
 ---
 
 Take a manual context snapshot of the current session.

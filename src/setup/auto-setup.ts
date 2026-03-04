@@ -1,11 +1,121 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync, symlinkSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { configureHooks } from './configure-hooks.js';
 
 const GREEN = '\x1b[32m';
 const CYAN = '\x1b[36m';
 const DIM = '\x1b[2m';
 const RESET = '\x1b[0m';
+
+const PLUGIN_VERSION = '0.2.1';
+
+// ─── Plugin Registration ───
+
+interface PluginEntry {
+  scope: string;
+  installPath: string;
+  version: string;
+  installedAt: string;
+  lastUpdated: string;
+}
+
+interface InstalledPlugins {
+  version: number;
+  plugins: Record<string, PluginEntry[]>;
+}
+
+/**
+ * Register bookmark in Claude Code's installed_plugins.json.
+ * This is required for skill/command discovery — the symlink alone isn't enough.
+ */
+export function registerPlugin(): boolean {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return false;
+
+  const pluginsDir = join(home, '.claude', 'plugins');
+  const installedPath = join(pluginsDir, 'installed_plugins.json');
+  const pluginLinkPath = join(pluginsDir, 'bookmark');
+
+  // Resolve the actual install path (follow symlink if present)
+  let installPath = pluginLinkPath;
+  try {
+    if (existsSync(pluginLinkPath)) {
+      installPath = realpathSync(pluginLinkPath);
+    }
+  } catch { /* use link path */ }
+
+  // Read existing installed_plugins.json
+  let installed: InstalledPlugins = { version: 2, plugins: {} };
+  if (existsSync(installedPath)) {
+    try {
+      installed = JSON.parse(readFileSync(installedPath, 'utf-8'));
+    } catch {
+      installed = { version: 2, plugins: {} };
+    }
+  }
+
+  const key = 'bookmark@local';
+  const now = new Date().toISOString();
+
+  // Check if already registered
+  if (installed.plugins[key]) {
+    // Update version and lastUpdated
+    installed.plugins[key][0].version = PLUGIN_VERSION;
+    installed.plugins[key][0].lastUpdated = now;
+    installed.plugins[key][0].installPath = installPath;
+  } else {
+    // Add new entry
+    installed.plugins[key] = [{
+      scope: 'user',
+      installPath,
+      version: PLUGIN_VERSION,
+      installedAt: now,
+      lastUpdated: now,
+    }];
+  }
+
+  try {
+    mkdirSync(pluginsDir, { recursive: true });
+    writeFileSync(installedPath, JSON.stringify(installed, null, 2), 'utf-8');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Ensure the bookmark symlink exists in ~/.claude/plugins/.
+ * Creates it pointing to bookmark's root directory (resolved from this file's location).
+ */
+function ensurePluginSymlink(): boolean {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return false;
+
+  const pluginsDir = join(home, '.claude', 'plugins');
+  const linkPath = join(pluginsDir, 'bookmark');
+
+  // Already exists (symlink or directory)
+  if (existsSync(linkPath)) return true;
+
+  try {
+    // Resolve bookmark's root: this file is at dist/setup/auto-setup.js → root is ../..
+    const thisDir = dirname(fileURLToPath(import.meta.url));
+    const bookmarkRoot = join(thisDir, '..', '..');
+
+    // Verify it's actually bookmark
+    const pkgPath = join(bookmarkRoot, 'package.json');
+    if (!existsSync(pkgPath)) return false;
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    if (pkg.name !== '@tyroneross/bookmark') return false;
+
+    mkdirSync(pluginsDir, { recursive: true });
+    symlinkSync(bookmarkRoot, linkPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Find the project root — npm sets INIT_CWD to the original working directory.
@@ -69,6 +179,14 @@ export function setupProject(cwd: string): string[] {
     }
   } catch { /* silently skip */ }
 
+  // 5. Register plugin for skill/command discovery
+  try {
+    ensurePluginSymlink();
+    if (registerPlugin()) {
+      steps.push('Registered bookmark plugin for Claude Code discovery');
+    }
+  } catch { /* silently skip */ }
+
   return steps;
 }
 
@@ -108,6 +226,11 @@ function autoSetup(): void {
 
   // Global install with no project context
   if (isGlobal && !hasProject) {
+    // Still register plugin for discovery even without a project
+    try {
+      ensurePluginSymlink();
+      registerPlugin();
+    } catch { /* silent */ }
     console.log(`\n  ${GREEN}Bookmark${RESET} installed globally.`);
     console.log(`  Hooks will auto-configure when you use ${CYAN}/bookmark:activate${RESET} in a Claude Code session.\n`);
     return;
@@ -190,17 +313,21 @@ This project uses @tyroneross/bookmark for context snapshots.
 
 **Automatic behavior:**
 - Snapshots captured before compaction and on session end
-- Context restored automatically on session start
-- Adaptive thresholds increase snapshot frequency with compaction count
-- Time-based snapshots every 20 minutes (configurable)
+- CONTEXT.md restored on session start (~400 tokens, trailhead with routing)
+- Trail files (decisions.md, files.md) available for deeper context via Read tool
+- No external API calls — you interpret the trails naturally
+
+**Trail routing:**
+- \`CONTEXT.md\` has intent, progress, and pointers to trail files
+- Follow \`trails/decisions.md\` for timestamped decision history
+- Follow \`trails/files.md\` for cumulative file change details
+- Only read trails if the trailhead isn't enough
 
 **Commands:**
 - \`/bookmark:snapshot\` — Manual snapshot
 - \`/bookmark:restore\` — Restore from a snapshot
 - \`/bookmark:status\` — Show snapshot stats
 - \`/bookmark:list\` — List all snapshots
-
-The system operates with zero context window tax — all processing runs externally.
 `;
 
   writeFileSync(claudeMdPath, content, 'utf-8');
