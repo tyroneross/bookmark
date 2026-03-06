@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { captureSnapshot } from '../snapshot/capture.js';
 import { loadSnapshot, listSnapshots, readLatestMd, getSnapshotCount, ensureStorageDirs } from '../snapshot/storage.js';
 import { compressToMarkdown } from '../snapshot/compress.js';
+import { readContextMd } from '../trails/reader.js';
 import { restoreContext } from '../restore/index.js';
 import { loadState, saveState } from '../threshold/state.js';
 import { checkTimeInterval } from '../threshold/time-based.js';
@@ -181,12 +182,17 @@ program
         return;
       }
 
-      // First time — write JSON marker and block
+      // First time — write JSON marker, track the block, and block
       const marker = JSON.stringify({
         timestamp: Date.now(),
         session_id: hookInput?.session_id ?? 'unknown',
       });
       writeFileSync(markerPath, marker, 'utf-8');
+      try {
+        const st = loadState(storagePath);
+        st.quality_blocks = (st.quality_blocks ?? 0) + 1;
+        saveState(storagePath, st);
+      } catch { /* tracking is best-effort */ }
       console.log(JSON.stringify({
         decision: 'block',
         reason: 'Write session summary to .claude/bookmarks/CONTEXT.md before stopping.',
@@ -285,6 +291,27 @@ program
       console.log(`  Last snapshot:      never`);
     }
 
+    // Usage counters — only show when there's data
+    const restores = state.restores_performed ?? 0;
+    const tokensInjected = state.tokens_injected ?? 0;
+    const blocks = state.quality_blocks ?? 0;
+    const caught = state.boilerplate_caught ?? 0;
+
+    if (restores > 0 || blocks > 0) {
+      console.log('');
+      console.log('Usage:');
+      if (restores > 0) {
+        console.log(`  Sessions restored:  ${restores}`);
+        console.log(`  Tokens injected:    ~${tokensInjected}`);
+      }
+      if (blocks > 0) {
+        console.log(`  Quality blocks:     ${blocks} (asked Claude to write CONTEXT.md)`);
+      }
+      if (caught > 0) {
+        console.log(`  Boilerplate caught: ${caught} (skipped stale restore)`);
+      }
+    }
+
     if (entries.length > 0) {
       console.log('');
       console.log('Recent Snapshots:');
@@ -336,11 +363,26 @@ program
     const storagePath = getStoragePath(cwd, config);
 
     if (opts.latest || !snapshotId) {
-      const md = readLatestMd(storagePath);
-      if (md) {
-        console.log(md);
-      } else {
+      const contextMd = readContextMd(storagePath);
+      const latestMd = readLatestMd(storagePath);
+
+      if (!contextMd && !latestMd) {
         console.log('No snapshots found.');
+        return;
+      }
+
+      if (contextMd) {
+        console.log(contextMd);
+      }
+
+      if (contextMd && latestMd) {
+        console.log('');
+        console.log('─── File Trail ───');
+        console.log('');
+      }
+
+      if (latestMd) {
+        console.log(latestMd);
       }
       return;
     }
@@ -572,7 +614,6 @@ async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
   console.log('');
   console.log('Defaults:');
   console.log(`  Interval:     ${intervalMinutes} minutes`);
-  console.log(`  Thresholds:   20% → 30% → 40% → 50% (adaptive)`);
   console.log('');
   console.log(`${GREEN}Ready.${RESET} Start a Claude Code session — snapshots will be captured automatically.`);
   console.log('');

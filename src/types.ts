@@ -102,6 +102,12 @@ export interface BookmarkState {
   last_event_time: number;
   snapshot_interval_minutes: number;
   session_history: SessionEntry[];
+
+  // Usage counters — only facts, no estimates
+  restores_performed?: number;
+  tokens_injected?: number;
+  quality_blocks?: number;
+  boilerplate_caught?: number;
 }
 
 export interface SessionEntry {

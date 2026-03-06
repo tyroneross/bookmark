@@ -52,17 +52,44 @@ export function restoreContext(options: RestoreOptions): HookOutput {
     const contextPath = join(storagePath, 'CONTEXT.md');
     const ageWarning = getStalenessWarning(contextPath);
     const message = ageWarning ? `${ageWarning}\n\n${contextMd}` : contextMd;
+    trackRestore(storagePath, message.length);
     return { systemMessage: message };
+  }
+
+  // CONTEXT.md existed but failed quality — track it
+  if (contextMd) {
+    trackBoilerplateCaught(storagePath);
   }
 
   // Fallback: LATEST.md (file tracking data)
   const snapshotCount = getSnapshotCount(storagePath);
   const latestMd = readLatestMd(storagePath);
   if (latestMd) {
-    return { systemMessage: buildFallbackRestoration(latestMd, snapshotCount) };
+    const message = buildFallbackRestoration(latestMd, snapshotCount);
+    trackRestore(storagePath, message.length);
+    return { systemMessage: message };
   }
 
   return {};
+}
+
+/** Record a successful restore — chars injected / 4 ≈ tokens */
+function trackRestore(storagePath: string, charCount: number): void {
+  try {
+    const state = loadState(storagePath);
+    state.restores_performed = (state.restores_performed ?? 0) + 1;
+    state.tokens_injected = (state.tokens_injected ?? 0) + Math.round(charCount / 4);
+    saveState(storagePath, state);
+  } catch { /* never break restore for tracking */ }
+}
+
+/** Record a boilerplate CONTEXT.md that was skipped */
+function trackBoilerplateCaught(storagePath: string): void {
+  try {
+    const state = loadState(storagePath);
+    state.boilerplate_caught = (state.boilerplate_caught ?? 0) + 1;
+    saveState(storagePath, state);
+  } catch { /* never break restore for tracking */ }
 }
 
 /**
