@@ -7,6 +7,7 @@
   "repository": "https://github.com/tyroneross/bookmark",
   "license": "MIT",
   "keywords": ["context", "snapshots", "session-continuity", "compaction", "memory"],
+  "commands": "../commands",
   "hooks": "../hooks/hooks.json",
   "skills": "../skills/",
   "agents": "../agents/",
