@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { configureHooks } from './configure-hooks.js';
+import { configureHooks, configureGlobalHooks } from './configure-hooks.js';
 
 const GREEN = '\x1b[32m';
 const CYAN = '\x1b[36m';
 const DIM = '\x1b[2m';
 const RESET = '\x1b[0m';
 
-const PLUGIN_VERSION = '0.3.1';
+const PLUGIN_VERSION = '0.3.2';
 
 // ─── Plugin Registration ───
 
@@ -191,22 +191,22 @@ export function setupProject(cwd: string): string[] {
 }
 
 /**
- * Auto-bootstrap: silently configure hooks if bookmark CLI runs in an unconfigured project.
- * Called at the top of CLI commands. No-op if already configured.
+ * Auto-bootstrap: silently configure storage if bookmark CLI runs in an unconfigured project.
+ * Called at the top of CLI commands. Creates .claude/bookmarks/ if needed.
+ * Works in any directory — not just npm projects.
  */
 export function ensureProjectBootstrapped(cwd: string): void {
   // Clean stale pipeline-generated CONTEXT.md on upgrade
   cleanStaleContextMd(cwd);
 
-  if (isProjectConfigured(cwd)) return;
-
-  // Skip if no package.json (not a real project)
-  if (!existsSync(join(cwd, 'package.json'))) return;
-
-  try {
-    setupProject(cwd);
-  } catch {
-    // Silent — don't break the command
+  // Ensure storage dirs exist (lazy creation on first hook invocation)
+  const bookmarkPath = join(cwd, '.claude', 'bookmarks');
+  if (!existsSync(bookmarkPath)) {
+    try {
+      mkdirSync(join(bookmarkPath, 'snapshots'), { recursive: true });
+    } catch {
+      // Silent — don't break the command
+    }
   }
 }
 
@@ -268,57 +268,137 @@ function autoSetup(): void {
   const isGlobal = process.env.npm_config_global === 'true';
   const hasProject = projectRoot !== '/' && existsSync(join(projectRoot, 'package.json'));
 
-  // Global install with no project context
-  if (isGlobal && !hasProject) {
-    // Still register plugin for discovery even without a project
-    try {
-      ensurePluginSymlink();
-      registerPlugin();
-    } catch { /* silent */ }
-    console.log(`\n  ${GREEN}Bookmark${RESET} installed globally.`);
-    console.log(`  Hooks will auto-configure when you use ${CYAN}/bookmark:activate${RESET} in a Claude Code session.\n`);
-    return;
-  }
-
-  // No project found
-  if (!hasProject) {
-    return;
-  }
-
   // Skip if this is our own package (development mode)
-  try {
-    const pkg = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf-8'));
-    if (pkg.name === '@tyroneross/bookmark') return;
-  } catch { /* ignore */ }
-
-  // Global install FROM a project directory — configure that project
-  // Local install — configure the project
+  if (hasProject) {
+    try {
+      const pkg = JSON.parse(readFileSync(join(projectRoot, 'package.json'), 'utf-8'));
+      if (pkg.name === '@tyroneross/bookmark') return;
+    } catch { /* ignore */ }
+  }
 
   console.log(`\n  ${GREEN}Bookmark${RESET} — Setting up context snapshots\n`);
 
+  const steps: string[] = [];
+
+  // 1. Always register global hooks — this is what makes it "just work"
   try {
-    const steps = setupProject(projectRoot);
+    configureGlobalHooks();
+    steps.push('Registered hooks globally (SessionStart, Stop, PreCompact, UserPromptSubmit)');
+  } catch { /* silent */ }
 
-    for (const step of steps) {
-      console.log(`  ${GREEN}+${RESET} ${step}`);
+  // 2. Plugin symlink + registry for skill/command discovery
+  try {
+    ensurePluginSymlink();
+    if (registerPlugin()) {
+      steps.push('Registered plugin for Claude Code discovery');
     }
+  } catch { /* silent */ }
 
-    console.log();
-    console.log(`  ${GREEN}Ready.${RESET} Context snapshots are now active.`);
-    console.log();
-    console.log(`  ${DIM}How it works:${RESET}`);
-    console.log(`  ${DIM}  - Snapshots captured automatically before compaction and on intervals${RESET}`);
-    console.log(`  ${DIM}  - Context restored when you start a new session${RESET}`);
-    console.log(`  ${DIM}  - Use${RESET} ${CYAN}/bookmark:snapshot${RESET} ${DIM}for manual snapshots${RESET}`);
-    console.log();
+  // 3. Inject into global CLAUDE.md so Claude always knows about bookmark
+  try {
+    if (injectGlobalClaudeMd()) {
+      steps.push('Added bookmark docs to ~/.claude/CLAUDE.md');
+    }
+  } catch { /* silent */ }
 
-  } catch (error) {
-    // Don't fail npm install
-    console.warn(`  Setup skipped: ${(error as Error).message}\n`);
+  // 4. If we're in a project, also configure it locally
+  if (hasProject) {
+    try {
+      const projectSteps = setupProject(projectRoot);
+      steps.push(...projectSteps);
+    } catch { /* silent */ }
   }
+
+  for (const step of steps) {
+    console.log(`  ${GREEN}+${RESET} ${step}`);
+  }
+
+  console.log();
+  console.log(`  ${GREEN}Ready.${RESET} Bookmark is now active in all projects.`);
+  console.log(`  ${DIM}Context auto-saved on stop, auto-restored on start. No setup needed per project.${RESET}`);
+  console.log();
 }
 
 // ─── Inject Helpers ───
+
+/**
+ * Register the bookmark MCP server in ~/.claude/.mcp.json.
+ * This makes bookmark tools (snapshot, restore, status, list, show)
+ * available to Claude in every project without per-project config.
+ */
+function registerGlobalMcp(): boolean {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return false;
+
+  const mcpPath = join(home, '.claude', '.mcp.json');
+
+  let mcpConfig: Record<string, unknown> = {};
+  if (existsSync(mcpPath)) {
+    try {
+      mcpConfig = JSON.parse(readFileSync(mcpPath, 'utf-8'));
+    } catch {
+      mcpConfig = {};
+    }
+  }
+
+  // Check if already registered
+  const mcpServers = (mcpConfig.mcpServers ?? {}) as Record<string, unknown>;
+  if (mcpServers.bookmark) return false;
+
+  // Resolve the server path from the plugin symlink or install location
+  const pluginLink = join(home, '.claude', 'plugins', 'bookmark');
+  let serverPath: string;
+  try {
+    const resolved = existsSync(pluginLink) ? realpathSync(pluginLink) : '';
+    serverPath = resolved ? join(resolved, 'dist', 'mcp', 'server.js') : '';
+  } catch {
+    serverPath = '';
+  }
+
+  if (!serverPath || !existsSync(serverPath)) return false;
+
+  mcpServers.bookmark = {
+    command: 'node',
+    args: [serverPath],
+  };
+  mcpConfig.mcpServers = mcpServers;
+
+  mkdirSync(join(home, '.claude'), { recursive: true });
+  writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
+  return true;
+}
+
+/**
+ * Inject bookmark docs into ~/.claude/CLAUDE.md (global).
+ * This ensures Claude always knows about bookmark regardless of project.
+ */
+function injectGlobalClaudeMd(): boolean {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return false;
+
+  const claudeMdPath = join(home, '.claude', 'CLAUDE.md');
+  const marker = '## Bookmark';
+
+  let content = '';
+  if (existsSync(claudeMdPath)) {
+    content = readFileSync(claudeMdPath, 'utf-8');
+    if (content.includes(marker)) return false;
+    if (!content.endsWith('\n')) content += '\n';
+    content += '\n';
+  } else {
+    mkdirSync(join(home, '.claude'), { recursive: true });
+  }
+
+  content += `${marker}
+
+Session continuity via hooks. Context auto-restored on session start from \`.claude/bookmarks/CONTEXT.md\`.
+On stop, write a brief summary (task, progress, decisions, files) to \`.claude/bookmarks/CONTEXT.md\` when prompted.
+File changes tracked automatically in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
+`;
+
+  writeFileSync(claudeMdPath, content, 'utf-8');
+  return true;
+}
 
 function injectGitignore(cwd: string): boolean {
   const gitignorePath = join(cwd, '.gitignore');

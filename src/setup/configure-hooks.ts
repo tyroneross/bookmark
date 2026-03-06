@@ -155,7 +155,90 @@ export function configureHooks(cwd: string): void {
 }
 
 /**
- * Remove bookmark hooks and plugin entry from settings.json.
+ * Configure hooks in the GLOBAL ~/.claude/settings.json.
+ * This makes bookmark fire in every project without per-project setup.
+ * Merges with existing hooks — never overwrites user's other hooks.
+ */
+export function configureGlobalHooks(): void {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return;
+
+  const settingsDir = join(home, '.claude');
+  const settingsPath = join(settingsDir, 'settings.json');
+
+  if (!existsSync(settingsDir)) {
+    mkdirSync(settingsDir, { recursive: true });
+  }
+
+  let settings: Settings = {};
+  if (existsSync(settingsPath)) {
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    } catch {
+      settings = {};
+    }
+  }
+
+  if (!settings.hooks) {
+    settings.hooks = {};
+  }
+
+  let changed = false;
+  for (const [event, hookConfig] of Object.entries(BOOKMARK_HOOKS)) {
+    if (!settings.hooks[event]) {
+      settings.hooks[event] = [];
+    }
+
+    const existingIdx = settings.hooks[event].findIndex(isBookmarkHook);
+
+    if (existingIdx === -1) {
+      // No existing bookmark hook — append (don't replace user's other hooks)
+      settings.hooks[event].push(hookConfig);
+      changed = true;
+    } else {
+      // Update existing bookmark hook in place
+      const existing = JSON.stringify(settings.hooks[event][existingIdx]);
+      const updated = JSON.stringify(hookConfig);
+      if (existing !== updated) {
+        settings.hooks[event][existingIdx] = hookConfig;
+        changed = true;
+      }
+    }
+  }
+
+  if (changed) {
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+  }
+}
+
+/**
+ * Remove bookmark hooks from the GLOBAL ~/.claude/settings.json.
+ */
+export function removeGlobalHooks(): void {
+  const home = process.env.HOME || process.env.USERPROFILE || '';
+  if (!home) return;
+  const settingsPath = join(home, '.claude', 'settings.json');
+  if (!existsSync(settingsPath)) return;
+
+  try {
+    const settings: Settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+    if (!settings.hooks) return;
+
+    for (const event of Object.keys(settings.hooks)) {
+      settings.hooks[event] = settings.hooks[event].filter(h => !isBookmarkHook(h));
+      if (settings.hooks[event].length === 0) {
+        delete settings.hooks[event];
+      }
+    }
+
+    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+  } catch {
+    // Silent
+  }
+}
+
+/**
+ * Remove bookmark hooks and plugin entry from a project's settings.json.
  */
 export function removeHooks(cwd: string): void {
   const settingsPath = join(cwd, '.claude', 'settings.json');
