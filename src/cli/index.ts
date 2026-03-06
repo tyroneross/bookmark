@@ -143,7 +143,7 @@ program
 
 program
   .command('stop')
-  .description('Stop hook — capture files, conditionally block for CONTEXT.md (for Stop hook)')
+  .description('Stop hook — capture files, conditionally block for bookmark.context.md (for Stop hook)')
   .option('--cwd <path>', 'Working directory')
   .action(async (opts) => {
     try {
@@ -166,10 +166,10 @@ program
 
       const config = loadConfig(cwd);
       const storagePath = getStoragePath(cwd, config);
-      const contextPath = join(storagePath, 'CONTEXT.md');
+      const contextPath = join(storagePath, 'bookmark.context.md');
       const markerPath = join(storagePath, '.stop-requested');
 
-      // Quality gate: check if CONTEXT.md has real content
+      // Quality gate: check if bookmark.context.md has real content
       if (isContextMdFresh(contextPath, markerPath)) {
         console.log(JSON.stringify({ decision: 'approve' }));
         return;
@@ -195,8 +195,8 @@ program
       } catch { /* tracking is best-effort */ }
       console.log(JSON.stringify({
         decision: 'block',
-        reason: 'Write session summary to .claude/bookmarks/CONTEXT.md before stopping.',
-        systemMessage: 'Before this session ends, write a brief session summary to .claude/bookmarks/CONTEXT.md using the Write tool. Include:\n- Current task (what the user asked for)\n- Progress (what\'s done, what\'s remaining)\n- Key decisions made and rationale\n- Active git branch if applicable\n- Files modified (top 5-10 by importance)\n- Any blockers or open questions\n\nKeep it under 30 lines. Overwrite any existing CONTEXT.md with the current state. Write it now, then stop.',
+        reason: 'Write session summary to .claude/bookmarks/bookmark.context.md before stopping.',
+        systemMessage: 'Before this session ends, write a brief session summary to .claude/bookmarks/bookmark.context.md using the Write tool. Include:\n- Current task (what the user asked for)\n- Progress (what\'s done, what\'s remaining)\n- Key decisions made and rationale\n- Active git branch if applicable\n- Files modified (top 5-10 by importance)\n- Any blockers or open questions\n\nKeep it under 30 lines. Overwrite any existing bookmark.context.md with the current state. Write it now, then stop.',
       }));
     } catch (err) {
       // Log error for debugging, then approve to never block stop
@@ -212,7 +212,7 @@ program
 
 program
   .command('precompact')
-  .description('PreCompact hook — capture files, request CONTEXT.md via systemMessage')
+  .description('PreCompact hook — capture files, request bookmark.context.md via systemMessage')
   .option('--cwd <path>', 'Working directory')
   .action(async (opts) => {
     try {
@@ -233,11 +233,11 @@ program
         } catch { /* file tracking is best-effort */ }
       }
 
-      // Non-blocking — always approve, politely ask Claude to write CONTEXT.md
+      // Non-blocking — always approve, politely ask Claude to write bookmark.context.md
       // Uses 5-min staleness window (more lenient than Stop's 2 min since work is ongoing)
       const config = loadConfig(cwd);
       const storagePath = getStoragePath(cwd, config);
-      const contextPath = join(storagePath, 'CONTEXT.md');
+      const contextPath = join(storagePath, 'bookmark.context.md');
 
       let needsUpdate = true;
       if (existsSync(contextPath)) {
@@ -252,7 +252,7 @@ program
 
       if (needsUpdate) {
         console.log(JSON.stringify({
-          systemMessage: 'Context compacting. Write session summary to .claude/bookmarks/CONTEXT.md with: task, progress, decisions, branch, files. Keep under 30 lines.',
+          systemMessage: 'Context compacting. Write session summary to .claude/bookmarks/bookmark.context.md with: task, progress, decisions, branch, files. Keep under 30 lines.',
         }));
       } else {
         console.log(JSON.stringify({}));
@@ -305,7 +305,7 @@ program
         console.log(`  Tokens injected:    ~${tokensInjected}`);
       }
       if (blocks > 0) {
-        console.log(`  Quality blocks:     ${blocks} (asked Claude to write CONTEXT.md)`);
+        console.log(`  Quality blocks:     ${blocks} (asked Claude to write bookmark.context.md)`);
       }
       if (caught > 0) {
         console.log(`  Boilerplate caught: ${caught} (skipped stale restore)`);
@@ -468,7 +468,7 @@ program
 // ─── Helpers ───
 
 /**
- * Quality gate for CONTEXT.md — checks that the file has real content,
+ * Quality gate for bookmark.context.md — checks that the file has real content,
  * not just old boilerplate. Prevents approving stale/empty summaries.
  */
 function isContextMdFresh(contextPath: string, markerPath: string): boolean {

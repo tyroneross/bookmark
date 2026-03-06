@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 
 /**
  * Compress a snapshot into markdown — now focused on file tracking data only.
- * Intent/decisions/progress come from Claude-written CONTEXT.md, not this.
+ * Intent/decisions/progress come from Claude-written bookmark.context.md, not this.
  * This becomes LATEST.md — supplementary file change data.
  */
 export function compressToMarkdown(snapshot: Snapshot): string {

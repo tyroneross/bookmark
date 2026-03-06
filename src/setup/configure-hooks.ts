@@ -57,7 +57,7 @@ const BOOKMARK_HOOKS: Record<string, SettingsHook> = {
 };
 
 const BOOKMARK_MARKER = '@tyroneross/bookmark';
-const BOOKMARK_PROMPT_MARKER = '.claude/bookmarks/CONTEXT.md';
+const BOOKMARK_PROMPT_MARKER = '.claude/bookmarks/bookmark.context.md';
 
 /**
  * Resolve the plugin path for the settings.json plugins array.

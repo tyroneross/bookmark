@@ -196,7 +196,7 @@ export function setupProject(cwd: string): string[] {
  * Works in any directory — not just npm projects.
  */
 export function ensureProjectBootstrapped(cwd: string): void {
-  // Clean stale pipeline-generated CONTEXT.md on upgrade
+  // Clean stale pipeline-generated bookmark.context.md on upgrade
   cleanStaleContextMd(cwd);
 
   // Ensure storage dirs exist (lazy creation on first hook invocation)
@@ -211,13 +211,13 @@ export function ensureProjectBootstrapped(cwd: string): void {
 }
 
 /**
- * Detect and remove pipeline-generated CONTEXT.md files that contain
+ * Detect and remove pipeline-generated bookmark.context.md files that contain
  * only empty metadata (the overwrite bug from v0.3.0).
  * These start with [Bookmark Context — and contain Intent: Unknown or
  * User feedback: positive with no real task content.
  */
 function cleanStaleContextMd(cwd: string): void {
-  const contextPath = join(cwd, '.claude', 'bookmarks', 'CONTEXT.md');
+  const contextPath = join(cwd, '.claude', 'bookmarks', 'bookmark.context.md');
   if (!existsSync(contextPath)) return;
 
   try {
@@ -391,8 +391,8 @@ function injectGlobalClaudeMd(): boolean {
 
   content += `${marker}
 
-Session continuity via hooks. Context auto-restored on session start from \`.claude/bookmarks/CONTEXT.md\`.
-On stop, write a brief summary (task, progress, decisions, files) to \`.claude/bookmarks/CONTEXT.md\` when prompted.
+Session continuity via hooks. Context auto-restored on session start from \`.claude/bookmarks/bookmark.context.md\`.
+On stop, write a brief summary (task, progress, decisions, files) to \`.claude/bookmarks/bookmark.context.md\` when prompted.
 File changes tracked automatically in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
 `;
 
@@ -435,7 +435,7 @@ function injectClaudeMd(cwd: string): boolean {
   // Minimal injection — hooks handle behavior, this just documents commands
   content += `${marker}
 
-Session continuity via hooks. Context auto-restored on session start from \`.claude/bookmarks/CONTEXT.md\`.
+Session continuity via hooks. Context auto-restored on session start from \`.claude/bookmarks/bookmark.context.md\`.
 File changes tracked in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
 `;
 

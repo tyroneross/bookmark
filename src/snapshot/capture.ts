@@ -24,7 +24,7 @@ export interface CaptureOptions {
  *
  * Intent, decisions, and progress are NOT extracted from transcripts —
  * regex can't do semantic extraction reliably. Instead, Claude writes
- * CONTEXT.md directly via prompt-type hooks (Stop, PreCompact).
+ * bookmark.context.md directly via prompt-type hooks (Stop, PreCompact).
  * This pipeline provides supplementary file tracking data.
  */
 export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot> {

@@ -17,7 +17,7 @@ export interface RestoreOptions {
  * Generate restoration context for a SessionStart hook.
  *
  * Simplified cascade (v0.3.1):
- * 1. CONTEXT.md — Claude-written session summary (primary)
+ * 1. bookmark.context.md — Claude-written session summary (primary)
  * 2. LATEST.md — File tracking data (fallback)
  * 3. Empty — First run, nothing to restore
  */
@@ -45,18 +45,18 @@ export function restoreContext(options: RestoreOptions): HookOutput {
     return {};
   }
 
-  // Primary: CONTEXT.md (Claude-written session summary) — with quality gate
+  // Primary: bookmark.context.md (Claude-written session summary) — with quality gate
   const contextMd = readContextMd(storagePath);
   if (contextMd && isContextMdUseful(contextMd)) {
     // Add staleness warning if >24h old
-    const contextPath = join(storagePath, 'CONTEXT.md');
+    const contextPath = join(storagePath, 'bookmark.context.md');
     const ageWarning = getStalenessWarning(contextPath);
     const message = ageWarning ? `${ageWarning}\n\n${contextMd}` : contextMd;
     trackRestore(storagePath, message.length);
     return { systemMessage: message };
   }
 
-  // CONTEXT.md existed but failed quality — track it
+  // bookmark.context.md existed but failed quality — track it
   if (contextMd) {
     trackBoilerplateCaught(storagePath);
   }
@@ -83,7 +83,7 @@ function trackRestore(storagePath: string, charCount: number): void {
   } catch { /* never break restore for tracking */ }
 }
 
-/** Record a boilerplate CONTEXT.md that was skipped */
+/** Record a boilerplate bookmark.context.md that was skipped */
 function trackBoilerplateCaught(storagePath: string): void {
   try {
     const state = loadState(storagePath);
@@ -93,7 +93,7 @@ function trackBoilerplateCaught(storagePath: string): void {
 }
 
 /**
- * Quality gate for CONTEXT.md content — skip boilerplate that wastes tokens.
+ * Quality gate for bookmark.context.md content — skip boilerplate that wastes tokens.
  * Real summaries are >200 bytes and contain markdown structure.
  */
 function isContextMdUseful(content: string): boolean {
@@ -108,7 +108,7 @@ function isContextMdUseful(content: string): boolean {
 }
 
 /**
- * If CONTEXT.md is >24h old, return a staleness warning prefix.
+ * If bookmark.context.md is >24h old, return a staleness warning prefix.
  * Prevents stale context from being treated as current.
  */
 function getStalenessWarning(contextPath: string): string | null {

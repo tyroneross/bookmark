@@ -6,7 +6,7 @@ import type { Snapshot, FileActivity } from '../types.js';
  * Trail-routed memory writer.
  *
  * Writes file tracking data to trails/files.md.
- * CONTEXT.md is Claude's domain — written via Stop/PreCompact prompt hooks.
+ * bookmark.context.md is Claude's domain — written via Stop/PreCompact prompt hooks.
  */
 
 // ─── Public API ───
@@ -82,7 +82,7 @@ function writeFileTrail(
 
   writeFileSync(trailPath, lines.join('\n'), 'utf-8');
 
-  // Return top files with summaries for CONTEXT.md
+  // Return top files with summaries for bookmark.context.md
   const topFiles = files
     .filter(f => f.summary)
     .slice(0, 5)
