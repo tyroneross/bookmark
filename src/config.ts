@@ -7,13 +7,10 @@ const DEFAULTS: BookmarkConfig = {
   thresholds: [0.20, 0.30, 0.40, 0.50, 0.60],
   maxThreshold: 0.60,
   intervalMinutes: 20,
-  contextLimitTokens: 200_000,
-  charsPerToken: 4,
   maxDecisions: 15,
   maxOpenItems: 10,
   maxFilesTracked: 20,
   maxErrorsTracked: 10,
-  summaryTokenBudget: 1000,
   maxActiveSnapshots: 50,
   archiveAfterDays: 30,
   snapshotOnSessionEnd: true,
@@ -47,9 +44,6 @@ export function loadConfig(cwd?: string): BookmarkConfig {
   }
   if (process.env.BOOKMARK_STORAGE_PATH) {
     config.storagePath = process.env.BOOKMARK_STORAGE_PATH;
-  }
-  if (process.env.BOOKMARK_CONTEXT_LIMIT) {
-    config.contextLimitTokens = parseInt(process.env.BOOKMARK_CONTEXT_LIMIT, 10) || config.contextLimitTokens;
   }
   if (process.env.BOOKMARK_VERBOSE === 'true') {
     config.verboseLogging = true;

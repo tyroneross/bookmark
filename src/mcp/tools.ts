@@ -215,13 +215,9 @@ async function handleSnapshot(
     [
       `Snapshot captured: ${snapshot.snapshot_id}`,
       `Trigger: ${trigger}`,
-      `Decisions: ${snapshot.decisions.length}`,
-      `Open items: ${snapshot.open_items.length}`,
       `Files tracked: ${snapshot.files_changed.length}`,
-      `Context remaining: ${Math.round(snapshot.context_remaining_pct * 100)}%`,
-      snapshot.intent ? `Intent: ${snapshot.intent}` : null,
+      `Tools: ${Object.keys(snapshot.tools_summary).length}`,
     ]
-      .filter(Boolean)
       .join("\n")
   );
 }

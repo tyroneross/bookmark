@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configureHooks } from './configure-hooks.js';
@@ -8,7 +8,7 @@ const CYAN = '\x1b[36m';
 const DIM = '\x1b[2m';
 const RESET = '\x1b[0m';
 
-const PLUGIN_VERSION = '0.2.1';
+const PLUGIN_VERSION = '0.3.1';
 
 // ─── Plugin Registration ───
 
@@ -195,6 +195,9 @@ export function setupProject(cwd: string): string[] {
  * Called at the top of CLI commands. No-op if already configured.
  */
 export function ensureProjectBootstrapped(cwd: string): void {
+  // Clean stale pipeline-generated CONTEXT.md on upgrade
+  cleanStaleContextMd(cwd);
+
   if (isProjectConfigured(cwd)) return;
 
   // Skip if no package.json (not a real project)
@@ -204,6 +207,47 @@ export function ensureProjectBootstrapped(cwd: string): void {
     setupProject(cwd);
   } catch {
     // Silent — don't break the command
+  }
+}
+
+/**
+ * Detect and remove pipeline-generated CONTEXT.md files that contain
+ * only empty metadata (the overwrite bug from v0.3.0).
+ * These start with [Bookmark Context — and contain Intent: Unknown or
+ * User feedback: positive with no real task content.
+ */
+function cleanStaleContextMd(cwd: string): void {
+  const contextPath = join(cwd, '.claude', 'bookmarks', 'CONTEXT.md');
+  if (!existsSync(contextPath)) return;
+
+  try {
+    const content = readFileSync(contextPath, 'utf-8');
+
+    // Only clean files that match the pipeline-generated format
+    if (!content.startsWith('[Bookmark Context')) return;
+
+    // Check for signs of empty pipeline output
+    const hasNoRealContent =
+      (content.includes('Intent:') && content.includes('Unknown')) ||
+      (content.includes('**User feedback:** positive') && !content.includes('**Intent:**')) ||
+      (content.includes('**User feedback:** positive') && content.includes('Intent: Unknown'));
+
+    // Don't delete if there's substantial content (Claude may have written useful stuff)
+    const lines = content.split('\n').filter(l => l.trim() && !l.startsWith('>') && !l.startsWith('['));
+    const contentLines = lines.filter(l =>
+      !l.startsWith('**Trails**') &&
+      !l.startsWith('- `') &&
+      !l.startsWith('Resume the task') &&
+      !l.startsWith('**User feedback:**') &&
+      !l.startsWith('**Intent:** Unknown') &&
+      !l.startsWith('**Progress:** Unknown')
+    );
+
+    if (hasNoRealContent && contentLines.length <= 2) {
+      unlinkSync(contextPath);
+    }
+  } catch {
+    // Silent — don't break bootstrap
   }
 }
 
@@ -294,40 +338,25 @@ function injectGitignore(cwd: string): boolean {
 
 function injectClaudeMd(cwd: string): boolean {
   const claudeMdPath = join(cwd, '.claude', 'CLAUDE.md');
-  const marker = '## Bookmark — Context Snapshots';
+  const marker = '## Bookmark';
+  const oldMarker = '## Bookmark — Context Snapshots';
 
   let content = '';
   if (existsSync(claudeMdPath)) {
     content = readFileSync(claudeMdPath, 'utf-8');
-    // Don't duplicate
+    // Don't duplicate (check both old and new markers)
     if (content.includes(marker)) return false;
-    content += '\n\n';
+    if (!content.endsWith('\n')) content += '\n';
+    content += '\n';
   } else {
-    // Ensure .claude dir exists
     mkdirSync(join(cwd, '.claude'), { recursive: true });
   }
 
+  // Minimal injection — hooks handle behavior, this just documents commands
   content += `${marker}
 
-This project uses @tyroneross/bookmark for context snapshots.
-
-**Automatic behavior:**
-- Snapshots captured before compaction and on session end
-- CONTEXT.md restored on session start (~400 tokens, trailhead with routing)
-- Trail files (decisions.md, files.md) available for deeper context via Read tool
-- No external API calls — you interpret the trails naturally
-
-**Trail routing:**
-- \`CONTEXT.md\` has intent, progress, and pointers to trail files
-- Follow \`trails/decisions.md\` for timestamped decision history
-- Follow \`trails/files.md\` for cumulative file change details
-- Only read trails if the trailhead isn't enough
-
-**Commands:**
-- \`/bookmark:snapshot\` — Manual snapshot
-- \`/bookmark:restore\` — Restore from a snapshot
-- \`/bookmark:status\` — Show snapshot stats
-- \`/bookmark:list\` — List all snapshots
+Session continuity via hooks. Context auto-restored on session start from \`.claude/bookmarks/CONTEXT.md\`.
+File changes tracked in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
 `;
 
   writeFileSync(claudeMdPath, content, 'utf-8');

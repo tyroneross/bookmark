@@ -3,7 +3,8 @@ import { join } from 'node:path';
 
 interface HookEntry {
   type: string;
-  command: string;
+  command?: string;
+  prompt?: string;
   timeout?: number;
   async?: boolean;
 }
@@ -19,24 +20,28 @@ interface Settings {
   [key: string]: unknown;
 }
 
-// Error log path — uses CLAUDE_PROJECT_DIR if available, falls back to project .claude/bookmarks/
-const ERROR_LOG = '"${CLAUDE_PROJECT_DIR:-.}/.claude/bookmarks/.errors.log"';
-
 const BOOKMARK_HOOKS: Record<string, SettingsHook> = {
+  Stop: {
+    matcher: '',
+    hooks: [{
+      type: 'command',
+      command: `npx @tyroneross/bookmark stop 2>/dev/null || echo '{"decision": "approve"}'`,
+      timeout: 10000,
+    }],
+  },
   PreCompact: {
     matcher: '',
     hooks: [{
       type: 'command',
-      command: `npx @tyroneross/bookmark snapshot --trigger pre_compact 2>>${ERROR_LOG} || true`,
-      timeout: 30000,
-      async: true,
+      command: `npx @tyroneross/bookmark precompact 2>/dev/null || echo '{}'`,
+      timeout: 10000,
     }],
   },
   SessionStart: {
     matcher: '',
     hooks: [{
       type: 'command',
-      command: `npx @tyroneross/bookmark restore 2>>${ERROR_LOG} || echo '{}'`,
+      command: `npx @tyroneross/bookmark restore 2>/dev/null || echo '{}'`,
       timeout: 5000,
     }],
   },
@@ -44,22 +49,15 @@ const BOOKMARK_HOOKS: Record<string, SettingsHook> = {
     matcher: '',
     hooks: [{
       type: 'command',
-      command: `npx @tyroneross/bookmark check 2>>${ERROR_LOG} || true`,
+      command: `npx @tyroneross/bookmark check 2>/dev/null || true`,
       timeout: 3000,
       async: true,
-    }],
-  },
-  Stop: {
-    matcher: '',
-    hooks: [{
-      type: 'command',
-      command: `npx @tyroneross/bookmark snapshot --trigger session_end 2>>${ERROR_LOG} || true`,
-      timeout: 15000,
     }],
   },
 };
 
 const BOOKMARK_MARKER = '@tyroneross/bookmark';
+const BOOKMARK_PROMPT_MARKER = '.claude/bookmarks/CONTEXT.md';
 
 /**
  * Resolve the plugin path for the settings.json plugins array.
@@ -88,8 +86,19 @@ function resolvePluginPath(cwd: string): string | null {
 }
 
 /**
+ * Check if a hook group contains a bookmark hook (command or prompt type).
+ */
+function isBookmarkHook(hookGroup: SettingsHook): boolean {
+  return hookGroup.hooks.some(hh =>
+    hh.command?.includes(BOOKMARK_MARKER) ||
+    hh.prompt?.includes(BOOKMARK_PROMPT_MARKER)
+  );
+}
+
+/**
  * Configure hooks and plugin registration in the project's .claude/settings.json.
- * Adds bookmark hooks and plugin path without duplicating or overwriting existing entries.
+ * All hooks are command-type — Stop and PreCompact use CLI commands that
+ * output JSON decisions (block/approve) and systemMessages.
  */
 export function configureHooks(cwd: string): void {
   const settingsDir = join(cwd, '.claude');
@@ -131,25 +140,14 @@ export function configureHooks(cwd: string): void {
       settings.hooks[event] = [];
     }
 
-    // Check if bookmark hook already exists
-    const exists = settings.hooks[event].some(h =>
-      h.hooks.some(hh => hh.command?.includes(BOOKMARK_MARKER))
-    );
+    const existingIdx = settings.hooks[event].findIndex(isBookmarkHook);
 
-    if (!exists) {
+    if (existingIdx === -1) {
+      // No existing bookmark hook — add the new one
       settings.hooks[event].push(hookConfig);
     } else {
-      // Update existing hooks to use error logging instead of /dev/null
-      for (const hookGroup of settings.hooks[event]) {
-        for (const hook of hookGroup.hooks) {
-          if (hook.command?.includes(BOOKMARK_MARKER) && hook.command.includes('2>/dev/null')) {
-            hook.command = hook.command.replace(
-              /2>\/dev\/null/g,
-              `2>>${ERROR_LOG}`
-            );
-          }
-        }
-      }
+      // Replace existing bookmark hook (upgrades old prompt hooks to command hooks)
+      settings.hooks[event][existingIdx] = hookConfig;
     }
   }
 
@@ -174,12 +172,10 @@ export function removeHooks(cwd: string): void {
       }
     }
 
-    // Remove hooks
+    // Remove hooks (both command and prompt types)
     if (settings.hooks) {
       for (const event of Object.keys(settings.hooks)) {
-        settings.hooks[event] = settings.hooks[event].filter(h =>
-          !h.hooks.some(hh => hh.command?.includes(BOOKMARK_MARKER))
-        );
+        settings.hooks[event] = settings.hooks[event].filter(h => !isBookmarkHook(h));
         if (settings.hooks[event].length === 0) {
           delete settings.hooks[event];
         }

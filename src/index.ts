@@ -13,8 +13,6 @@ export type {
   IndexStats,
   BookmarkState,
   SessionEntry,
-  TokenEstimate,
-  ExtractionResult,
   HookInput,
   HookOutput,
   BookmarkConfig,
@@ -35,8 +33,7 @@ export {
 } from './snapshot/storage.js';
 export { restoreContext } from './restore/index.js';
 export { parseTranscript } from './transcript/parser.js';
-export { estimateFromTranscript, quickEstimate } from './transcript/estimator.js';
-export { extractFromEntries } from './transcript/extractor.js';
+export { extractFilesAndTools } from './transcript/extractor.js';
 export { loadState, saveState } from './threshold/state.js';
 export { getThreshold, shouldSnapshotByThreshold } from './threshold/adaptive.js';
 export { checkTimeInterval } from './threshold/time-based.js';

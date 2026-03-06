@@ -1,10 +1,9 @@
 import { parseTranscript } from '../transcript/parser.js';
-import { estimateFromTranscript } from '../transcript/estimator.js';
-import { extractFromEntries } from '../transcript/extractor.js';
+import { extractFilesAndTools } from '../transcript/extractor.js';
 import { storeSnapshot, writeLatestMd, loadLatestSnapshot } from './storage.js';
 import { compressToMarkdown } from './compress.js';
 import { writeTrails } from '../trails/writer.js';
-import { loadState, saveState, updateSnapshotTime } from '../threshold/state.js';
+import { loadState, saveState, updateSnapshotTime, incrementSnapshotCount } from '../threshold/state.js';
 import { loadConfig, getStoragePath } from '../config.js';
 import type { Snapshot, SnapshotTrigger } from '../types.js';
 
@@ -16,18 +15,17 @@ export interface CaptureOptions {
 }
 
 /**
- * Full snapshot capture pipeline:
+ * Snapshot capture pipeline (v0.3 — file tracking only):
  * 1. Parse transcript
- * 2. Estimate token usage
- * 3. Extract decisions/status/files via pattern matching (fast, zero cost)
- * 4. Build snapshot object
- * 5. Store snapshot JSON
- * 6. Write LATEST.md + trail-routed files (CONTEXT.md, decisions.md, files.md)
- * 7. Update state
+ * 2. Extract file changes + tool usage (the parts that actually work)
+ * 3. Build snapshot object
+ * 4. Store snapshot JSON + write LATEST.md + trail files
+ * 5. Update state
  *
- * No external API calls — the running Claude Code instance interprets the
- * trail files on restore. Pattern matching captures the structured data;
- * Claude (already running, already paid for) does the smart interpretation.
+ * Intent, decisions, and progress are NOT extracted from transcripts —
+ * regex can't do semantic extraction reliably. Instead, Claude writes
+ * CONTEXT.md directly via prompt-type hooks (Stop, PreCompact).
+ * This pipeline provides supplementary file tracking data.
  */
 export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot> {
   const config = loadConfig(options.cwd);
@@ -37,16 +35,11 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
   // 1. Parse transcript
   const { entries } = parseTranscript(options.transcriptPath);
 
-  // 2. Estimate token usage
-  const estimate = estimateFromTranscript(options.transcriptPath, {
-    contextLimit: config.contextLimitTokens,
-    charsPerToken: config.charsPerToken,
-  });
+  // 2. Extract file changes + tool usage only (working parts of extractor)
+  // Intent, decisions, progress are NOT extracted — Claude writes those via prompt hooks
+  const extraction = extractFilesAndTools(entries, { projectPath: options.cwd });
 
-  // 3. Extract structural content via pattern matching (fast, zero external cost)
-  const extraction = extractFromEntries(entries, { projectPath: options.cwd });
-
-  // 4. Build snapshot
+  // 3. Build snapshot
   const snapshotId = generateSnapshotId();
   const priorSnapshot = loadLatestSnapshot(storagePath);
 
@@ -57,37 +50,26 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
     project_path: options.cwd,
     trigger: options.trigger,
     compaction_cycle: state.compaction_count,
-    context_remaining_pct: estimate.remaining_pct,
-    token_estimate: estimate.total_tokens,
-    intent: extraction.intent ?? 'Unknown',
-    progress: extraction.progress ?? 'Unknown',
-    current_status: extraction.current_status,
-    decisions: extraction.decisions,
-    open_items: extraction.open_items,
-    unknowns: extraction.unknowns,
     files_changed: extraction.files_changed,
-    errors_encountered: extraction.errors_encountered,
     tools_summary: extraction.tools_summary,
-    user_sentiment: extraction.user_sentiment,
     prior_snapshot_id: priorSnapshot?.snapshot_id,
   };
 
-  // 5. Store snapshot
-  storeSnapshot(storagePath, snapshot);
+  // 4. Skip empty snapshots — don't write JSON/index for 0-file non-manual captures
+  // This prevents accumulation of empty session_end snapshots
+  const hasContent = snapshot.files_changed.length > 0 || snapshot.trigger === 'manual';
 
-  // 6. Write LATEST.md + trail-routed files — only update if snapshot has content
-  const hasContent = snapshot.files_changed.length > 0
-    || snapshot.decisions.length > 0
-    || snapshot.open_items.length > 0;
-  if (hasContent || snapshot.trigger === 'manual') {
+  if (hasContent) {
+    storeSnapshot(storagePath, snapshot);
     const markdown = compressToMarkdown(snapshot);
     writeLatestMd(storagePath, markdown);
     writeTrails(storagePath, snapshot);
   }
 
-  // 7. Update state
+  // 6. Update state + increment snapshot counter
   const updatedState = updateSnapshotTime(state);
-  saveState(storagePath, updatedState);
+  const finalState = incrementSnapshotCount(updatedState);
+  saveState(storagePath, finalState);
 
   return snapshot;
 }

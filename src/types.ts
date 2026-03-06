@@ -9,21 +9,22 @@ export interface Snapshot {
   // Trigger metadata
   trigger: SnapshotTrigger;
   compaction_cycle: number;
-  context_remaining_pct: number;
-  token_estimate: number;
 
-  // Core context (what matters for handoff)
-  intent: string;           // What is the user trying to accomplish?
-  progress: string;         // How far along are they?
-
-  // Extracted content
-  current_status: string;
-  decisions: Decision[];
-  open_items: OpenItem[];
-  unknowns: string[];
+  // File tracking (the parts that work)
   files_changed: FileActivity[];
-  errors_encountered: ErrorEntry[];
   tools_summary: Record<string, number>;
+
+  // Dead fields — kept optional for backward compat with existing snapshots
+  // Claude writes these via prompt hooks now, not extracted from transcripts
+  context_remaining_pct?: number;
+  token_estimate?: number;
+  intent?: string;
+  progress?: string;
+  current_status?: string;
+  decisions?: Decision[];
+  open_items?: OpenItem[];
+  unknowns?: string[];
+  errors_encountered?: ErrorEntry[];
   user_sentiment?: 'positive' | 'neutral' | 'negative';
 
   // Continuity chain
@@ -82,11 +83,12 @@ export interface SnapshotEntry {
   timestamp: number;
   trigger: SnapshotTrigger;
   compaction_cycle: number;
-  context_remaining_pct: number;
-  token_estimate: number;
-  decisions_count: number;
   files_changed_count: number;
-  open_items_count: number;
+  // Dead fields — kept optional for backward compat
+  context_remaining_pct?: number;
+  token_estimate?: number;
+  decisions_count?: number;
+  open_items_count?: number;
 }
 
 // ─── State Types ───
@@ -131,31 +133,6 @@ export interface TranscriptContent {
   content?: string | TranscriptContent[];
 }
 
-export interface TokenEstimate {
-  total_tokens: number;
-  message_count: number;
-  user_tokens: number;
-  assistant_tokens: number;
-  tool_tokens: number;
-  system_tokens: number;
-  context_limit: number;
-  remaining_pct: number;
-  remaining_tokens: number;
-}
-
-export interface ExtractionResult {
-  intent?: string;
-  progress?: string;
-  current_status: string;
-  decisions: Decision[];
-  open_items: OpenItem[];
-  unknowns: string[];
-  files_changed: FileActivity[];
-  errors_encountered: ErrorEntry[];
-  tools_summary: Record<string, number>;
-  user_sentiment?: 'positive' | 'neutral' | 'negative';
-}
-
 // ─── Hook Input Types ───
 
 export interface HookInput {
@@ -181,13 +158,10 @@ export interface BookmarkConfig {
   thresholds: number[];
   maxThreshold: number;
   intervalMinutes: number;
-  contextLimitTokens: number;
-  charsPerToken: number;
   maxDecisions: number;
   maxOpenItems: number;
   maxFilesTracked: number;
   maxErrorsTracked: number;
-  summaryTokenBudget: number;
   maxActiveSnapshots: number;
   archiveAfterDays: number;
   snapshotOnSessionEnd: boolean;

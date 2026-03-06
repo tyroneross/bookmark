@@ -1,59 +1,40 @@
-# Bookmark — Context Snapshots for Claude Code
+# Bookmark — Session Continuity for Claude Code
 
 ## What Bookmark Does
 
-Bookmark automatically captures, compresses, and restores session context so you never lose progress across compactions, terminal closures, or computer shutdowns.
+Bookmark preserves session context across terminal closures and compactions. You (Claude) write a brief summary to CONTEXT.md before stopping or compacting. On the next session start, that summary is restored so you can pick up where you left off.
 
 ## How It Works
 
-**Automatic hooks** (zero context window tax):
-- **PreCompact** — Snapshots before compaction (async, external process)
-- **SessionStart** — Restores context from CONTEXT.md (trailhead)
-- **UserPromptSubmit** — Checks time/threshold intervals (fast no-op when nothing triggers)
-- **Stop** — Final snapshot before session ends
+**Hooks** (configured in settings.json, all command-type):
+- **Stop** — Blocks once if CONTEXT.md is stale, asking you to write it before exit
+- **PreCompact** — Captures files, sends systemMessage asking for CONTEXT.md update
+- **SessionStart** — Restores CONTEXT.md content on startup, cleans session state
+- **UserPromptSubmit** — Periodic file change tracking (async, silent)
 
-**Trail-routed memory** — Context stored in a hierarchy of navigable files:
-- `CONTEXT.md` — Compact trailhead (~400 tokens), always restored on session start
-- `trails/decisions.md` — Timestamped decision chain, newer overrides older on same topic
-- `trails/files.md` — Cumulative file activity sorted by impact
+**You write the summary.** The Stop hook blocks exit once if you haven't written `.claude/bookmarks/CONTEXT.md` recently (<2 min). Write task status, progress, decisions, and files modified. On retry, it always approves (max 1 block).
 
-**No external API calls** — You (Claude Code) are the interpreter. Pattern matching captures structured data during snapshots. You interpret the trails on restore.
+**File tracking is automatic.** The UserPromptSubmit hook captures file changes and tool usage from the transcript. This data supplements your summary in `trails/files.md`.
 
-**Adaptive thresholds** — Snapshots trigger earlier as compaction happens more:
-- 1st compaction: snapshot at 20% remaining
-- 2nd: 30% remaining
-- 3rd+: 40-50% remaining
+## Storage
 
-## Storage Location
-
-All data lives in `<project>/.claude/bookmarks/`:
 ```
 .claude/bookmarks/
-├── CONTEXT.md      ← Trailhead — read this on restore (~400 tokens)
+├── CONTEXT.md      ← Your session summary (you write this)
 ├── trails/
-│   ├── decisions.md ← Follow for decision history
-│   └── files.md     ← Follow for file change details
-├── LATEST.md       ← Flat markdown backup
+│   └── files.md    ← Automated file change tracking
+├── LATEST.md       ← File tracking snapshot
+├── snapshots/      ← Historical snapshots (SNAP_*.json)
 ├── index.json      ← Snapshot index
-├── state.json      ← Plugin state
-├── snapshots/      ← Full snapshot files (SNAP_*.json)
-└── archive/        ← Old snapshots
+└── state.json      ← Plugin state
 ```
 
-## How to Use Trails
-
-When CONTEXT.md is restored, it contains routing pointers to trail files. If you need more detail:
-1. Read the trailhead (CONTEXT.md) — usually enough to resume
-2. Follow `trails/decisions.md` if you need decision history or rationale
-3. Follow `trails/files.md` if you need to know what files were modified and how much
-
-## Available Commands
+## Commands
 
 | Command | Purpose |
 |---------|---------|
-| `/bookmark:snapshot` | Take a manual snapshot |
-| `/bookmark:restore` | Restore from latest or specific snapshot |
-| `/bookmark:status` | Show snapshot inventory and stats |
+| `/bookmark:snapshot` | Manual snapshot + write CONTEXT.md |
+| `/bookmark:status` | Show snapshot stats |
 | `/bookmark:list` | List all snapshots |
 
-*bookmark — context snapshot*
+*bookmark — session continuity*

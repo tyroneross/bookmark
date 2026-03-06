@@ -64,7 +64,7 @@ export function resetForNewSession(state: BookmarkState, sessionId: string, thre
       started: state.session_history.find(s => s.session_id === state.session_id)?.started ?? state.last_event_time,
       ended: Date.now(),
       compaction_count: state.compaction_count,
-      snapshots_taken: 0, // Updated elsewhere
+      snapshots_taken: 0, // Incremented by incrementSnapshotCount on each capture
     };
     history.unshift(currentEntry);
     if (history.length > MAX_SESSION_HISTORY) {
@@ -88,4 +88,21 @@ export function updateSnapshotTime(state: BookmarkState): BookmarkState {
     last_snapshot_time: Date.now(),
     last_event_time: Date.now(),
   };
+}
+
+/**
+ * Increment snapshots_taken for the current session in session_history.
+ * Previously this was never called — snapshots_taken was always 0.
+ */
+export function incrementSnapshotCount(state: BookmarkState): BookmarkState {
+  if (!state.session_id) return state;
+
+  const history = state.session_history.map(entry => {
+    if (entry.session_id === state.session_id) {
+      return { ...entry, snapshots_taken: entry.snapshots_taken + 1 };
+    }
+    return entry;
+  });
+
+  return { ...state, session_history: history };
 }

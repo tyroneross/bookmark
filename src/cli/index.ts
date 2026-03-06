@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
@@ -12,8 +12,6 @@ import { compressToMarkdown } from '../snapshot/compress.js';
 import { restoreContext } from '../restore/index.js';
 import { loadState, saveState } from '../threshold/state.js';
 import { checkTimeInterval } from '../threshold/time-based.js';
-import { shouldSnapshotByThreshold } from '../threshold/adaptive.js';
-import { quickEstimate } from '../transcript/estimator.js';
 import { loadConfig, getStoragePath, writeConfig } from '../config.js';
 import { configureHooks } from '../setup/configure-hooks.js';
 import { ensureProjectBootstrapped, setupProject } from '../setup/auto-setup.js';
@@ -24,7 +22,7 @@ const program = new Command();
 program
   .name('bookmark')
   .description('Context snapshots for Claude Code — session continuity across compactions and terminals')
-  .version('0.1.0');
+  .version('0.3.2');
 
 // ─── Hook Commands (invoked by hooks, not users) ───
 
@@ -61,10 +59,8 @@ program
 
       console.log(`Snapshot captured: ${snapshot.snapshot_id}`);
       console.log(`  Trigger: ${snapshot.trigger}`);
-      console.log(`  Decisions: ${snapshot.decisions.length}`);
       console.log(`  Files changed: ${snapshot.files_changed.length}`);
-      console.log(`  Open items: ${snapshot.open_items.length}`);
-      console.log(`  Context remaining: ${Math.round(snapshot.context_remaining_pct * 100)}%`);
+      console.log(`  Tools tracked: ${Object.keys(snapshot.tools_summary).length}`);
     } catch (err) {
       console.error('Snapshot failed:', (err as Error).message);
       process.exit(1);
@@ -118,24 +114,11 @@ program
       let shouldCapture = false;
       let reason = '';
 
-      // Check time interval
+      // Check time interval only — token estimation removed (can't know actual context usage)
       const timeCheck = checkTimeInterval(state);
       if (timeCheck.shouldSnapshot) {
         shouldCapture = true;
         reason = timeCheck.reason ?? 'time interval';
-      }
-
-      // Check adaptive threshold
-      if (!shouldCapture && transcriptPath) {
-        const { remainingPct } = quickEstimate(
-          transcriptPath,
-          config.contextLimitTokens,
-          config.charsPerToken
-        );
-        if (shouldSnapshotByThreshold(remainingPct, state.compaction_count, config)) {
-          shouldCapture = true;
-          reason = `context at ${Math.round(remainingPct * 100)}% remaining (threshold: ${Math.round(state.current_threshold * 100)}%)`;
-        }
       }
 
       if (shouldCapture && transcriptPath) {
@@ -154,6 +137,123 @@ program
       saveState(storagePath, { ...state, last_event_time: Date.now() });
     } catch {
       // Silent — never break user prompt flow
+    }
+  });
+
+program
+  .command('stop')
+  .description('Stop hook — capture files, conditionally block for CONTEXT.md (for Stop hook)')
+  .option('--cwd <path>', 'Working directory')
+  .action(async (opts) => {
+    try {
+      const hookInput = await readHookInput();
+      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      ensureProjectBootstrapped(cwd);
+
+      // Always capture file tracking snapshot
+      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(cwd);
+      if (transcriptPath) {
+        try {
+          await captureSnapshot({
+            trigger: 'session_end',
+            transcriptPath,
+            cwd,
+            sessionId: hookInput?.session_id,
+          });
+        } catch { /* file tracking is best-effort */ }
+      }
+
+      const config = loadConfig(cwd);
+      const storagePath = getStoragePath(cwd, config);
+      const contextPath = join(storagePath, 'CONTEXT.md');
+      const markerPath = join(storagePath, '.stop-requested');
+
+      // Quality gate: check if CONTEXT.md has real content
+      if (isContextMdFresh(contextPath, markerPath)) {
+        console.log(JSON.stringify({ decision: 'approve' }));
+        return;
+      }
+
+      // Check .stop-requested marker — max 1 block to prevent loops
+      if (existsSync(markerPath)) {
+        // Already blocked once — approve to prevent infinite loop
+        console.log(JSON.stringify({ decision: 'approve' }));
+        return;
+      }
+
+      // First time — write JSON marker and block
+      const marker = JSON.stringify({
+        timestamp: Date.now(),
+        session_id: hookInput?.session_id ?? 'unknown',
+      });
+      writeFileSync(markerPath, marker, 'utf-8');
+      console.log(JSON.stringify({
+        decision: 'block',
+        reason: 'Write session summary to .claude/bookmarks/CONTEXT.md before stopping.',
+        systemMessage: 'Before this session ends, write a brief session summary to .claude/bookmarks/CONTEXT.md using the Write tool. Include:\n- Current task (what the user asked for)\n- Progress (what\'s done, what\'s remaining)\n- Key decisions made and rationale\n- Active git branch if applicable\n- Files modified (top 5-10 by importance)\n- Any blockers or open questions\n\nKeep it under 30 lines. Overwrite any existing CONTEXT.md with the current state. Write it now, then stop.',
+      }));
+    } catch (err) {
+      // Log error for debugging, then approve to never block stop
+      try {
+        const config = loadConfig(opts.cwd ?? process.cwd());
+        const storagePath = getStoragePath(opts.cwd ?? process.cwd(), config);
+        const errLog = join(storagePath, '.errors.log');
+        appendFileSync(errLog, `[${new Date().toISOString()}] stop: ${(err as Error).message}\n`);
+      } catch { /* truly silent */ }
+      console.log(JSON.stringify({ decision: 'approve' }));
+    }
+  });
+
+program
+  .command('precompact')
+  .description('PreCompact hook — capture files, request CONTEXT.md via systemMessage')
+  .option('--cwd <path>', 'Working directory')
+  .action(async (opts) => {
+    try {
+      const hookInput = await readHookInput();
+      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      ensureProjectBootstrapped(cwd);
+
+      // Always capture file tracking snapshot
+      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(cwd);
+      if (transcriptPath) {
+        try {
+          await captureSnapshot({
+            trigger: 'pre_compact',
+            transcriptPath,
+            cwd,
+            sessionId: hookInput?.session_id,
+          });
+        } catch { /* file tracking is best-effort */ }
+      }
+
+      // Non-blocking — always approve, politely ask Claude to write CONTEXT.md
+      // Uses 5-min staleness window (more lenient than Stop's 2 min since work is ongoing)
+      const config = loadConfig(cwd);
+      const storagePath = getStoragePath(cwd, config);
+      const contextPath = join(storagePath, 'CONTEXT.md');
+
+      let needsUpdate = true;
+      if (existsSync(contextPath)) {
+        try {
+          const mtime = statSync(contextPath).mtimeMs;
+          const fiveMinAgo = Date.now() - 5 * 60 * 1000;
+          if (mtime > fiveMinAgo) {
+            needsUpdate = false;
+          }
+        } catch { /* assume needs update */ }
+      }
+
+      if (needsUpdate) {
+        console.log(JSON.stringify({
+          systemMessage: 'Context compacting. Write session summary to .claude/bookmarks/CONTEXT.md with: task, progress, decisions, branch, files. Keep under 30 lines.',
+        }));
+      } else {
+        console.log(JSON.stringify({}));
+      }
+    } catch {
+      // Never block compaction
+      console.log(JSON.stringify({}));
     }
   });
 
@@ -176,7 +276,6 @@ program
     console.log('═══════════════');
     console.log(`  Snapshots:          ${count}`);
     console.log(`  Compaction cycles:  ${state.compaction_count}`);
-    console.log(`  Current threshold:  ${Math.round(state.current_threshold * 100)}% remaining`);
     console.log(`  Snapshot interval:  ${state.snapshot_interval_minutes} minutes`);
 
     if (state.last_snapshot_time > 0) {
@@ -191,8 +290,7 @@ program
       console.log('Recent Snapshots:');
       for (const entry of entries) {
         const date = new Date(entry.timestamp).toLocaleString();
-        const pct = Math.round(entry.context_remaining_pct * 100);
-        console.log(`  ${entry.id}  ${entry.trigger.padEnd(14)}  ${pct}% ctx  ${date}`);
+        console.log(`  ${entry.id}  ${entry.trigger.padEnd(14)}  ${date}`);
       }
     }
 
@@ -216,13 +314,12 @@ program
     }
 
     console.log('');
-    console.log('ID                    Trigger          Ctx%   Decisions  Files  Open Items  Time');
-    console.log('────────────────────  ───────────────  ─────  ─────────  ─────  ──────────  ────────────────────');
+    console.log('ID                    Trigger          Files  Time');
+    console.log('────────────────────  ───────────────  ─────  ────────────────────');
     for (const entry of entries) {
       const date = new Date(entry.timestamp).toLocaleString();
-      const pct = `${Math.round(entry.context_remaining_pct * 100)}%`.padStart(4);
       console.log(
-        `${entry.id}  ${entry.trigger.padEnd(15)}  ${pct}   ${String(entry.decisions_count).padStart(9)}  ${String(entry.files_changed_count).padStart(5)}  ${String(entry.open_items_count).padStart(10)}  ${date}`
+        `${entry.id}  ${entry.trigger.padEnd(15)}  ${String(entry.files_changed_count).padStart(5)}  ${date}`
       );
     }
     console.log('');
@@ -281,13 +378,12 @@ program
     console.log(`  Storage path:       ${config.storagePath}`);
     console.log(`  Interval:           ${config.intervalMinutes} minutes`);
     console.log(`  Thresholds:         ${config.thresholds.map(t => `${Math.round(t * 100)}%`).join(', ')}`);
-    console.log(`  Context limit:      ${config.contextLimitTokens.toLocaleString()} tokens`);
     console.log(`  Max snapshots:      ${config.maxActiveSnapshots}`);
     console.log(`  Archive after:      ${config.archiveAfterDays} days`);
     console.log('');
     console.log('Environment overrides:');
     console.log('  BOOKMARK_INTERVAL, BOOKMARK_THRESHOLD, BOOKMARK_STORAGE_PATH');
-    console.log('  BOOKMARK_CONTEXT_LIMIT, BOOKMARK_VERBOSE');
+    console.log('  BOOKMARK_VERBOSE');
     console.log('');
   });
 
@@ -329,6 +425,30 @@ program
 
 // ─── Helpers ───
 
+/**
+ * Quality gate for CONTEXT.md — checks that the file has real content,
+ * not just old boilerplate. Prevents approving stale/empty summaries.
+ */
+function isContextMdFresh(contextPath: string, markerPath: string): boolean {
+  if (!existsSync(contextPath)) return false;
+  try {
+    const stat = statSync(contextPath);
+    // Must be >200 bytes (boilerplate template is ~180 bytes)
+    if (stat.size < 200) return false;
+    // Must be newer than .stop-requested marker (if marker exists)
+    if (existsSync(markerPath)) {
+      const markerTime = statSync(markerPath).mtimeMs;
+      if (stat.mtimeMs <= markerTime) return false;
+    }
+    // Content must not be boilerplate — real summaries have markdown headers
+    const content = readFileSync(contextPath, 'utf-8');
+    if (content.startsWith('[Bookmark Context') && !content.includes('## ')) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const GREEN = '\x1b[32m';
 const CYAN = '\x1b[36m';
 const DIM = '\x1b[2m';
@@ -353,20 +473,9 @@ function discoverTranscriptPath(cwd: string): string | null {
     // e.g., /Users/tyroneross/myproject → -Users-tyroneross-myproject
     const encodedCwd = cwd.replace(/\//g, '-');
 
-    // Prefer exact match, then longest match (most specific path)
-    let matchingDir = projectDirs.find(d => d === encodedCwd);
-    if (!matchingDir) {
-      // Find the most specific (longest) matching directory
-      const candidates = projectDirs.filter(d =>
-        d === encodedCwd || encodedCwd.startsWith(d) || d.startsWith(encodedCwd)
-      );
-      if (candidates.length > 0) {
-        // Sort by length descending — most specific match first
-        candidates.sort((a, b) => b.length - a.length);
-        matchingDir = candidates[0];
-      }
-    }
-
+    // Exact match only — fuzzy matching caused cross-project contamination
+    // where e.g. FloDoro would match bookmark's transcript dir via startsWith
+    const matchingDir = projectDirs.find(d => d === encodedCwd);
     if (!matchingDir) return null;
 
     const transcriptDir = join(claudeProjectsDir, matchingDir);
