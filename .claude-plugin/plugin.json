@@ -1,7 +1,7 @@
 {
   "name": "bookmark",
   "version": "0.3.2",
-  "description": "Context snapshots for Claude Code — session continuity across compactions and terminals",
+  "description": "Session context continuity — auto-save and restore context across compactions and terminal closures",
   "author": { "name": "Tyrone Ross" },
   "homepage": "https://github.com/tyroneross/bookmark",
   "repository": "https://github.com/tyroneross/bookmark",
