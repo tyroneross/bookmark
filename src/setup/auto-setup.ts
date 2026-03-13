@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, realpathSync, symli
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { configureHooks, configureGlobalHooks } from './configure-hooks.js';
+import { migrateLegacyStorage } from '../config.js';
 
 const GREEN = '\x1b[32m';
 const CYAN = '\x1b[36m';
@@ -151,11 +152,14 @@ export function isProjectConfigured(cwd: string): boolean {
 export function setupProject(cwd: string): string[] {
   const steps: string[] = [];
 
+  // 0. Migrate legacy storage if needed
+  migrateLegacyStorage(cwd);
+
   // 1. Ensure storage directories
-  const bookmarkPath = join(cwd, '.claude', 'bookmarks');
+  const bookmarkPath = join(cwd, '.bookmark');
   mkdirSync(join(bookmarkPath, 'snapshots'), { recursive: true });
   mkdirSync(join(bookmarkPath, 'archive'), { recursive: true });
-  steps.push('Created .claude/bookmarks/ directories');
+  steps.push('Created .bookmark/ directories');
 
   // 2. Configure hooks in settings.json
   try {
@@ -163,11 +167,11 @@ export function setupProject(cwd: string): string[] {
     steps.push('Configured 4 hooks (PreCompact, SessionStart, UserPromptSubmit, Stop)');
   } catch { /* silently skip */ }
 
-  // 3. Add .claude/bookmarks/ to .gitignore
+  // 3. Add .bookmark/ to .gitignore
   try {
     const added = injectGitignore(cwd);
     if (added) {
-      steps.push('Added .claude/bookmarks/ to .gitignore');
+      steps.push('Added .bookmark/ to .gitignore');
     }
   } catch { /* silently skip */ }
 
@@ -192,15 +196,18 @@ export function setupProject(cwd: string): string[] {
 
 /**
  * Auto-bootstrap: silently configure storage if bookmark CLI runs in an unconfigured project.
- * Called at the top of CLI commands. Creates .claude/bookmarks/ if needed.
+ * Called at the top of CLI commands. Creates .bookmark/ if needed.
  * Works in any directory — not just npm projects.
  */
 export function ensureProjectBootstrapped(cwd: string): void {
+  // Migrate legacy .claude/bookmarks/ to .bookmark/ if needed
+  migrateLegacyStorage(cwd);
+
   // Clean stale pipeline-generated bookmark.context.md on upgrade
   cleanStaleContextMd(cwd);
 
   // Ensure storage dirs exist (lazy creation on first hook invocation)
-  const bookmarkPath = join(cwd, '.claude', 'bookmarks');
+  const bookmarkPath = join(cwd, '.bookmark');
   if (!existsSync(bookmarkPath)) {
     try {
       mkdirSync(join(bookmarkPath, 'snapshots'), { recursive: true });
@@ -217,7 +224,7 @@ export function ensureProjectBootstrapped(cwd: string): void {
  * User feedback: positive with no real task content.
  */
 function cleanStaleContextMd(cwd: string): void {
-  const contextPath = join(cwd, '.claude', 'bookmarks', 'bookmark.context.md');
+  const contextPath = join(cwd, '.bookmark', 'bookmark.context.md');
   if (!existsSync(contextPath)) return;
 
   try {
@@ -391,8 +398,8 @@ function injectGlobalClaudeMd(): boolean {
 
   content += `${marker}
 
-Session continuity via hooks. Context auto-restored on session start from \`.claude/bookmarks/bookmark.context.md\`.
-On stop, write a brief summary (task, progress, decisions, files) to \`.claude/bookmarks/bookmark.context.md\` when prompted.
+Session continuity via hooks. Context auto-restored on session start from \`.bookmark/bookmark.context.md\`.
+On stop, write a brief summary (task, progress, decisions, files) to \`.bookmark/bookmark.context.md\` when prompted.
 File changes tracked automatically in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
 `;
 
@@ -402,7 +409,7 @@ File changes tracked automatically in \`trails/files.md\`. Commands: \`/bookmark
 
 function injectGitignore(cwd: string): boolean {
   const gitignorePath = join(cwd, '.gitignore');
-  const entry = '.claude/bookmarks/';
+  const entry = '.bookmark/';
 
   let content = '';
   if (existsSync(gitignorePath)) {
@@ -435,7 +442,7 @@ function injectClaudeMd(cwd: string): boolean {
   // Minimal injection — hooks handle behavior, this just documents commands
   content += `${marker}
 
-Session continuity via hooks. Context auto-restored on session start from \`.claude/bookmarks/bookmark.context.md\`.
+Session continuity via hooks. Context auto-restored on session start from \`.bookmark/bookmark.context.md\`.
 File changes tracked in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
 `;
 

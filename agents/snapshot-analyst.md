@@ -18,7 +18,7 @@ You analyze context snapshots to help users understand session history.
 
 ## Data Location
 
-All bookmark data is in `.claude/bookmarks/`:
+All bookmark data is in `.bookmark/`:
 - `LATEST.md` — Latest compressed summary
 - `index.json` — Snapshot index with stats
 - `state.json` — Plugin state (compaction count, thresholds)

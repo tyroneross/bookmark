@@ -132,10 +132,10 @@ Requires `ANTHROPIC_API_KEY`. Falls back to pattern matching if unavailable.
 
 ## Storage
 
-All data lives in your project at `.claude/bookmarks/`:
+All data lives in your project at `.bookmark/`:
 
 ```
-.claude/bookmarks/
+.bookmark/
 ├── LATEST.md       # Hot context — what gets restored on SessionStart
 ├── index.json      # Snapshot index with stats
 ├── state.json      # Plugin state (compaction count, thresholds, timing)
@@ -164,7 +164,7 @@ All the heavy lifting happens outside the context window.
 | `BOOKMARK_THRESHOLD` | `0.2,0.3,0.4,0.5,0.6` | Adaptive threshold levels |
 | `BOOKMARK_CONTEXT_LIMIT` | `200000` | Context window size in tokens |
 | `BOOKMARK_SMART` | `false` | Enable smart extraction by default |
-| `BOOKMARK_STORAGE_PATH` | `.claude/bookmarks` | Storage directory |
+| `BOOKMARK_STORAGE_PATH` | `.bookmark` | Storage directory |
 | `BOOKMARK_VERBOSE` | `false` | Enable verbose logging |
 | `BOOKMARK_SKIP_SETUP` | `false` | Skip postinstall auto-setup |
 

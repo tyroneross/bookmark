@@ -195,8 +195,8 @@ program
       } catch { /* tracking is best-effort */ }
       console.log(JSON.stringify({
         decision: 'block',
-        reason: 'Write session summary to .claude/bookmarks/bookmark.context.md before stopping.',
-        systemMessage: 'Before this session ends, write a brief session summary to .claude/bookmarks/bookmark.context.md using the Write tool. Include:\n- Current task (what the user asked for)\n- Progress (what\'s done, what\'s remaining)\n- Key decisions made and rationale\n- Active git branch if applicable\n- Files modified (top 5-10 by importance)\n- Any blockers or open questions\n\nKeep it under 30 lines. Overwrite any existing bookmark.context.md with the current state. Write it now, then stop.',
+        reason: 'Write session summary to .bookmark/bookmark.context.md before stopping.',
+        systemMessage: 'Before this session ends, write a brief session summary to .bookmark/bookmark.context.md using the Write tool. Include:\n- Current task (what the user asked for)\n- Progress (what\'s done, what\'s remaining)\n- Key decisions made and rationale\n- Active git branch if applicable\n- Files modified (top 5-10 by importance)\n- Any blockers or open questions\n\nKeep it under 30 lines. Overwrite any existing bookmark.context.md with the current state. Write it now, then stop.',
       }));
     } catch (err) {
       // Log error for debugging, then approve to never block stop
@@ -252,7 +252,7 @@ program
 
       if (needsUpdate) {
         console.log(JSON.stringify({
-          systemMessage: 'Context compacting. Write session summary to .claude/bookmarks/bookmark.context.md with: task, progress, decisions, branch, files. Keep under 30 lines.',
+          systemMessage: 'Context compacting. Write session summary to .bookmark/bookmark.context.md with: task, progress, decisions, branch, files. Keep under 30 lines.',
         }));
       } else {
         console.log(JSON.stringify({}));
@@ -597,7 +597,7 @@ async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
 
   // Write user preferences
   writeConfig(cwd, { intervalMinutes });
-  steps.push('Saved config to .claude/bookmarks/config.json');
+  steps.push('Saved config to .bookmark/config.json');
 
   // Initialize state with user preferences
   const sp = getStoragePath(cwd);

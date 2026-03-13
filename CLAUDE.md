@@ -12,14 +12,14 @@ Bookmark preserves session context across terminal closures and compactions. You
 - **SessionStart** — Restores bookmark.context.md content on startup, cleans session state
 - **UserPromptSubmit** — Periodic file change tracking (async, silent)
 
-**You write the summary.** The Stop hook blocks exit once if you haven't written `.claude/bookmarks/bookmark.context.md` recently (<2 min). Write task status, progress, decisions, and files modified. On retry, it always approves (max 1 block).
+**You write the summary.** The Stop hook blocks exit once if you haven't written `.bookmark/bookmark.context.md` recently (<2 min). Write task status, progress, decisions, and files modified. On retry, it always approves (max 1 block).
 
 **File tracking is automatic.** The UserPromptSubmit hook captures file changes and tool usage from the transcript. This data supplements your summary in `trails/files.md`.
 
 ## Storage
 
 ```
-.claude/bookmarks/
+.bookmark/
 ├── bookmark.context.md      ← Your session summary (you write this)
 ├── trails/
 │   └── files.md    ← Automated file change tracking

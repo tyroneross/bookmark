@@ -20,7 +20,7 @@ After the snapshot is taken, confirm to the user with:
 - Number of files tracked
 - Number of tools tracked
 
-Then write a brief session summary to `.claude/bookmarks/bookmark.context.md` that includes:
+Then write a brief session summary to `.bookmark/bookmark.context.md` that includes:
 - Current task (what the user asked for)
 - Progress (what's done, what's remaining)
 - Key decisions made and rationale

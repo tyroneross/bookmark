@@ -1,9 +1,9 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BookmarkConfig, SetupPreferences } from './types.js';
 
 const DEFAULTS: BookmarkConfig = {
-  storagePath: '.claude/bookmarks',
+  storagePath: '.bookmark',
   thresholds: [0.20, 0.30, 0.40, 0.50, 0.60],
   maxThreshold: 0.60,
   intervalMinutes: 20,
@@ -23,7 +23,7 @@ export function loadConfig(cwd?: string): BookmarkConfig {
 
   // Project-level config
   if (cwd) {
-    const projectConfigPath = join(cwd, '.claude', 'bookmarks', 'config.json');
+    const projectConfigPath = join(cwd, '.bookmark', 'config.json');
     if (existsSync(projectConfigPath)) {
       try {
         const projectConfig = JSON.parse(readFileSync(projectConfigPath, 'utf-8'));
@@ -57,8 +57,75 @@ export function getStoragePath(cwd: string, config?: BookmarkConfig): string {
   return join(cwd, cfg.storagePath);
 }
 
+/**
+ * Migrate data from legacy .claude/bookmarks/ to new .bookmark/ location.
+ * Called during bootstrap to ensure seamless upgrade for existing projects.
+ */
+export function migrateLegacyStorage(cwd: string): void {
+  const legacyPath = join(cwd, '.claude', 'bookmarks');
+  const newPath = join(cwd, '.bookmark');
+
+  // Only migrate if legacy path exists and new path is empty or doesn't exist
+  if (!existsSync(legacyPath)) return;
+
+  // Check if new path already has data
+  if (existsSync(newPath)) {
+    try {
+      const files = readdirSync(newPath);
+      // If new path has files (excluding .gitkeep, .DS_Store), skip migration
+      const hasData = files.some(f => !f.startsWith('.'));
+      if (hasData) return;
+    } catch {
+      return;
+    }
+  }
+
+  try {
+    // Create new path if it doesn't exist
+    if (!existsSync(newPath)) {
+      mkdirSync(newPath, { recursive: true });
+    }
+
+    // Move all files and directories from legacy to new location
+    const items = readdirSync(legacyPath);
+    for (const item of items) {
+      const legacyItemPath = join(legacyPath, item);
+      const newItemPath = join(newPath, item);
+
+      try {
+        renameSync(legacyItemPath, newItemPath);
+      } catch {
+        // Skip items that can't be moved
+      }
+    }
+
+    // Clean up empty legacy directory
+    try {
+      const remaining = readdirSync(legacyPath);
+      if (remaining.length === 0) {
+        rmdirSync(legacyPath);
+
+        // Also try to remove .claude if it's now empty
+        const claudePath = join(cwd, '.claude');
+        try {
+          const claudeContents = readdirSync(claudePath);
+          if (claudeContents.length === 0) {
+            rmdirSync(claudePath);
+          }
+        } catch {
+          // .claude has other content, leave it
+        }
+      }
+    } catch {
+      // Legacy dir not empty or can't be removed, that's fine
+    }
+  } catch {
+    // Migration failed, but that's okay — user can manually move if needed
+  }
+}
+
 export function writeConfig(cwd: string, prefs: SetupPreferences): void {
-  const configDir = join(cwd, '.claude', 'bookmarks');
+  const configDir = join(cwd, '.bookmark');
   if (!existsSync(configDir)) {
     mkdirSync(configDir, { recursive: true });
   }
