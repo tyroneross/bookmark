@@ -170,7 +170,7 @@ All the heavy lifting happens outside the context window.
 
 ## Requirements
 
-- Node.js >= 20
+- Node.js >= 15
 - Claude Code
 
 ## License
