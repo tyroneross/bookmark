@@ -1,15 +1,25 @@
 {
-  "title": "Bookmark — Context Snapshots",
-  "tagline": "Never lose session context again",
-  "category": "developer-tools",
-  "icon": "bookmark",
-  "screenshots": [],
-  "features": [
-    "Automatic snapshots before compaction",
-    "Adaptive threshold system",
-    "Time-based interval snapshots",
-    "Zero context window tax",
-    "Session restoration on startup",
-    "Optional LLM-enhanced extraction"
+  "name": "bookmark",
+  "owner": {
+    "name": "Tyrone Ross",
+    "url": "https://github.com/tyroneross"
+  },
+  "metadata": {
+    "description": "Official marketplace for bookmark — session context continuity",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "bookmark",
+      "source": "./",
+      "description": "Session context continuity — auto-save and restore context across compactions and terminal closures",
+      "version": "0.3.2",
+      "author": { "name": "Tyrone Ross" },
+      "homepage": "https://github.com/tyroneross/bookmark",
+      "repository": "https://github.com/tyroneross/bookmark",
+      "license": "MIT",
+      "category": "developer-tools",
+      "keywords": ["context", "snapshots", "session-continuity", "compaction", "memory"]
+    }
   ]
 }
