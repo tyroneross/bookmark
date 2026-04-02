@@ -147,19 +147,22 @@ program
   .option('--cwd <path>', 'Working directory')
   .action(async (opts) => {
     try {
-      const hookInput = await readHookInput();
-      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      // Skip stdin reading — Claude Code command hooks don't pipe stdin.
+      // readHookInput() waits 1s for data that never arrives, then the
+      // JSON validation fails in Claude Code's hook validator.
+      // All data is discovered independently via cwd, env vars, and path discovery.
+      const cwd = opts.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
       ensureProjectBootstrapped(cwd);
 
       // Always capture file tracking snapshot
-      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(cwd);
+      const transcriptPath = discoverTranscriptPath(cwd);
       if (transcriptPath) {
         try {
           await captureSnapshot({
             trigger: 'session_end',
             transcriptPath,
             cwd,
-            sessionId: hookInput?.session_id,
+            sessionId: process.env.CLAUDE_SESSION_ID,
           });
         } catch { /* file tracking is best-effort */ }
       }
@@ -185,7 +188,7 @@ program
       // First time — write JSON marker, track the block, and block
       const marker = JSON.stringify({
         timestamp: Date.now(),
-        session_id: hookInput?.session_id ?? 'unknown',
+        session_id: process.env.CLAUDE_SESSION_ID ?? 'unknown',
       });
       writeFileSync(markerPath, marker, 'utf-8');
       try {
@@ -216,19 +219,19 @@ program
   .option('--cwd <path>', 'Working directory')
   .action(async (opts) => {
     try {
-      const hookInput = await readHookInput();
-      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      // Skip stdin reading — Claude Code command hooks don't pipe stdin.
+      const cwd = opts.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
       ensureProjectBootstrapped(cwd);
 
       // Always capture file tracking snapshot
-      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(cwd);
+      const transcriptPath = discoverTranscriptPath(cwd);
       if (transcriptPath) {
         try {
           await captureSnapshot({
             trigger: 'pre_compact',
             transcriptPath,
             cwd,
-            sessionId: hookInput?.session_id,
+            sessionId: process.env.CLAUDE_SESSION_ID,
           });
         } catch { /* file tracking is best-effort */ }
       }
