@@ -146,6 +146,65 @@ All data lives in your project at `.bookmark/`:
 
 Automatically added to `.gitignore` — snapshot data never gets committed.
 
+## Identity Block (v0.4+)
+
+Every `bookmark.context.md` should start with an `BOOKMARK_IDENTITY` HTML comment that
+declares which project and git state the summary belongs to. This makes cross-session
+restoration unambiguous — a bookmark can't be mistaken for a different repo's context.
+
+```markdown
+# Session Context — Travel Planner
+
+<!-- BOOKMARK_IDENTITY
+scope: repo
+project: travel-planner
+repo_path: /Users/me/Desktop/git-folder/Travel Planner
+branch: feature/summer-camps
+head: 4988383
+written: 2026-04-11
+-->
+
+## Current Task
+...
+```
+
+Supported fields: `scope` (`repo` or `home`), `project`, `repo_path`, `repo_name`, `branch`,
+`head`, `base`, `written`, `written_by`. Unknown keys are preserved for forward compatibility.
+
+### Path validation
+
+At restore time, bookmark compares the identity's `repo_path` to the CWD it was invoked in.
+Mismatch → the restored content is prefixed with an "identity mismatch" warning, so the new
+session can verify the bookmark belongs to the project before acting on it.
+
+### Home-scope pointers
+
+A `scope: home` bookmark at `~/.bookmark/bookmark.context.md` is a **pointer**, not a
+session context. It contains `points_to_canonical` naming the real repo-scoped file:
+
+```markdown
+<!-- BOOKMARK_IDENTITY
+scope: home
+project: POINTER_ONLY
+points_to_project: travel-planner
+points_to_canonical: /Users/me/Desktop/git-folder/Travel Planner/.bookmark/bookmark.context.md
+-->
+```
+
+SessionStart automatically follows the pointer — a session launched from `~/` now gets
+routed to the canonical project bookmark without manual `cd`. Previously, the home
+bookmark would be served as if it were the active context (with potentially stale or
+wrong-project content).
+
+## Hard Staleness Block (v0.4+)
+
+Stale auto-restore is worse than no auto-restore: a 14-day-old bookmark prefixed with a
+soft warning still creates "confident wrong starts" because the warning reads as noise.
+Bookmark now **hard-blocks** auto-restore at **72 hours** — past that threshold, the
+restored content is replaced with a message telling you to pick a specific snapshot via
+`/bookmark:list` or read the file manually if you actually want it. Soft warnings still
+apply between 24h and 72h.
+
 ## Zero Context Tax
 
 This is the key design principle. Every other approach to "memory" for Claude Code injects tokens into your context window, reducing the space available for actual work.
