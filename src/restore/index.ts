@@ -2,6 +2,12 @@ import { existsSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { readLatestMd, getSnapshotCount } from '../snapshot/storage.js';
 import { readContextMd } from '../trails/reader.js';
+import {
+  parseIdentity,
+  validateRepoIdentity,
+  followPointer,
+  type BookmarkIdentity,
+} from '../trails/identity.js';
 import { loadState, saveState, resetForNewSession, incrementCompaction } from '../threshold/state.js';
 import { loadConfig, getStoragePath } from '../config.js';
 import type { HookOutput, BookmarkState } from '../types.js';
@@ -14,54 +20,98 @@ export interface RestoreOptions {
 }
 
 /**
+ * Hours after which a bookmark is considered too stale to auto-restore.
+ * Below this threshold: restore with a soft warning.
+ * At or above: hard-block — return an empty context with guidance instead
+ * of risking a confident wrong start from stale content.
+ */
+const STALENESS_HARD_BLOCK_HOURS = 72;
+const STALENESS_SOFT_WARN_HOURS = 24;
+
+/**
  * Generate restoration context for a SessionStart hook.
  *
- * Simplified cascade (v0.3.1):
- * 1. bookmark.context.md — Claude-written session summary (primary)
- * 2. LATEST.md — File tracking data (fallback)
- * 3. Empty — First run, nothing to restore
+ * v0.4 adds:
+ *  1. BOOKMARK_IDENTITY parsing + repo_path validation
+ *  2. Home-scope pointer delegation to a canonical repo bookmark
+ *  3. Hard staleness block at 72h (instead of soft warning only)
+ *
+ * Cascade:
+ *  1. bookmark.context.md — if present and useful
+ *     1a. If identity scope=home + points_to_canonical, follow the pointer
+ *     1b. If identity scope=repo and path mismatch, prefix a warning
+ *     1c. If age >= STALENESS_HARD_BLOCK_HOURS, return staleness block
+ *  2. LATEST.md — file tracking fallback
+ *  3. Empty
  */
 export function restoreContext(options: RestoreOptions): HookOutput {
   const config = loadConfig(options.cwd);
   const storagePath = getStoragePath(options.cwd, config);
   const state = loadState(storagePath);
 
-  // Handle session state transitions
   handleSessionTransition(storagePath, state, options, config.thresholds);
 
-  // Clean up .stop-requested state file from previous sessions
   const stopRequestedPath = join(storagePath, '.stop-requested');
   if (existsSync(stopRequestedPath)) {
     try { unlinkSync(stopRequestedPath); } catch { /* ignore */ }
   }
 
-  // Check if restoration is needed
-  if (!config.restoreOnSessionStart) {
-    return {};
-  }
+  if (!config.restoreOnSessionStart) return {};
+  if (options.source === 'resume') return {};
 
-  // On resume, context is likely intact — skip restoration
-  if (options.source === 'resume') {
-    return {};
-  }
-
-  // Primary: bookmark.context.md (Claude-written session summary) — with quality gate
-  const contextMd = readContextMd(storagePath);
-  if (contextMd && isContextMdUseful(contextMd)) {
-    // Add staleness warning if >24h old
+  // Primary: bookmark.context.md with identity-aware handling
+  const rawContextMd = readContextMd(storagePath);
+  if (rawContextMd && isContextMdUseful(rawContextMd)) {
     const contextPath = join(storagePath, 'bookmark.context.md');
-    const ageWarning = getStalenessWarning(contextPath);
-    const message = ageWarning ? `${ageWarning}\n\n${contextMd}` : contextMd;
+    const { identity, bodyWithoutIdentity } = parseIdentity(rawContextMd);
+
+    // 1a. Home-scope pointer? Follow it to the canonical repo bookmark.
+    if (identity?.scope === 'home') {
+      const target = followPointer(identity);
+      if (target) {
+        const targetAge = target.staleness_hours ?? 0;
+        if (targetAge >= STALENESS_HARD_BLOCK_HOURS) {
+          trackRestore(storagePath, 0);
+          return { systemMessage: buildHardStalenessMessage(target.canonical_path, targetAge) };
+        }
+
+        // Strip identity block from target content for cleaner display
+        const { bodyWithoutIdentity: targetBody } = parseIdentity(target.content);
+        const header = buildPointerFollowHeader(identity, target.canonical_path, targetAge);
+        const message = `${header}\n\n${targetBody}`;
+        trackRestore(storagePath, message.length);
+        return { systemMessage: message };
+      }
+      // Pointer target missing — fall through to present the pointer body itself
+    }
+
+    // 1c. Hard staleness block
+    const ageHours = getAgeHours(contextPath);
+    if (ageHours !== null && ageHours >= STALENESS_HARD_BLOCK_HOURS) {
+      trackRestore(storagePath, 0);
+      return { systemMessage: buildHardStalenessMessage(contextPath, ageHours) };
+    }
+
+    // 1b. Path-mismatch warning for repo-scoped identities
+    const mismatchWarning = identity ? validateRepoIdentity(identity, options.cwd) : null;
+
+    // Soft staleness warning
+    const softWarning =
+      ageHours !== null && ageHours >= STALENESS_SOFT_WARN_HOURS
+        ? `[Note: This bookmark context is ${ageHours}h old and may be outdated.]`
+        : null;
+
+    const prefixes = [mismatchWarning, softWarning].filter(Boolean).join('\n\n');
+    const message = prefixes ? `${prefixes}\n\n${bodyWithoutIdentity}` : bodyWithoutIdentity;
     trackRestore(storagePath, message.length);
     return { systemMessage: message };
   }
 
-  // bookmark.context.md existed but failed quality — track it
-  if (contextMd) {
+  if (rawContextMd) {
     trackBoilerplateCaught(storagePath);
   }
 
-  // Fallback: LATEST.md (file tracking data)
+  // Fallback: LATEST.md
   const snapshotCount = getSnapshotCount(storagePath);
   const latestMd = readLatestMd(storagePath);
   if (latestMd) {
@@ -83,7 +133,6 @@ function trackRestore(storagePath: string, charCount: number): void {
   } catch { /* never break restore for tracking */ }
 }
 
-/** Record a boilerplate bookmark.context.md that was skipped */
 function trackBoilerplateCaught(storagePath: string): void {
   try {
     const state = loadState(storagePath);
@@ -92,37 +141,54 @@ function trackBoilerplateCaught(storagePath: string): void {
   } catch { /* never break restore for tracking */ }
 }
 
-/**
- * Quality gate for bookmark.context.md content — skip boilerplate that wastes tokens.
- * Real summaries are >200 bytes and contain markdown structure.
- */
 function isContextMdUseful(content: string): boolean {
-  // Size gate: boilerplate templates are ~180 bytes
   if (content.length < 200) return false;
-  // Boilerplate detection: old auto-generated summaries start with [Bookmark Context
-  // and lack real markdown headers
   if (content.startsWith('[Bookmark Context') && !content.includes('## ')) return false;
-  // Must have at least one real content marker
   const markers = ['## ', '**Task', '**Status', '**Progress', 'done', 'remaining', '- '];
   return markers.some(m => content.includes(m));
 }
 
-/**
- * If bookmark.context.md is >24h old, return a staleness warning prefix.
- * Prevents stale context from being treated as current.
- */
-function getStalenessWarning(contextPath: string): string | null {
+function getAgeHours(path: string): number | null {
   try {
-    const mtime = statSync(contextPath).mtimeMs;
-    const ageMs = Date.now() - mtime;
-    const ageHours = Math.round(ageMs / (1000 * 60 * 60));
-    if (ageHours >= 24) {
-      return `[Note: This bookmark context is ${ageHours}h old and may be outdated.]`;
-    }
-    return null;
+    const mtime = statSync(path).mtimeMs;
+    return Math.round((Date.now() - mtime) / (1000 * 60 * 60));
   } catch {
     return null;
   }
+}
+
+function buildHardStalenessMessage(path: string, ageHours: number): string {
+  return [
+    `[Bookmark: auto-restore BLOCKED — source is ${ageHours}h stale (threshold ${STALENESS_HARD_BLOCK_HOURS}h).]`,
+    '',
+    `The bookmark file at ${path} is too old to treat as current context.`,
+    'Stale auto-restore creates confident wrong starts — worse than no restore at all.',
+    '',
+    'To proceed, either:',
+    '- Run `/bookmark:list` and pick a specific snapshot explicitly',
+    '- Read the stale file manually if you still want its content: ' +
+      `\`cat "${path}"\``,
+    '- Ask the user what they were working on most recently',
+  ].join('\n');
+}
+
+function buildPointerFollowHeader(
+  pointer: BookmarkIdentity,
+  canonicalPath: string,
+  ageHours: number
+): string {
+  const lines = [
+    `[Bookmark: followed home-scope pointer → repo-scope bookmark]`,
+    '',
+    `Canonical file: ${canonicalPath}`,
+  ];
+  if (pointer.points_to_project) {
+    lines.push(`Project: ${pointer.points_to_project}`);
+  }
+  if (ageHours >= STALENESS_SOFT_WARN_HOURS) {
+    lines.push(`Age: ${ageHours}h (approaching staleness threshold of ${STALENESS_HARD_BLOCK_HOURS}h)`);
+  }
+  return lines.join('\n');
 }
 
 function buildFallbackRestoration(latestMd: string, snapshotCount: number): string {
@@ -151,18 +217,15 @@ function handleSessionTransition(
   switch (source) {
     case 'startup':
     case 'clear':
-      // New session — reset compaction count
       updatedState = resetForNewSession(state, sessionId, thresholds);
       break;
 
     case 'compact':
-      // After compaction — increment compaction count
       updatedState = incrementCompaction(state, thresholds);
       updatedState.session_id = sessionId;
       break;
 
     case 'resume':
-      // Resuming — keep state, just update session ID if different
       updatedState = { ...state, session_id: sessionId, last_event_time: Date.now() };
       break;
 
