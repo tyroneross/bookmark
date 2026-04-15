@@ -16,6 +16,7 @@ import { checkTimeInterval } from '../threshold/time-based.js';
 import { loadConfig, getStoragePath, writeConfig } from '../config.js';
 import { configureHooks } from '../setup/configure-hooks.js';
 import { ensureProjectBootstrapped, setupProject } from '../setup/auto-setup.js';
+import { findById, pruneStale, getLastProject } from '../registry.js';
 import type { HookInput, SnapshotTrigger } from '../types.js';
 
 const program = new Command();
@@ -331,15 +332,46 @@ program
   .command('list')
   .description('List available snapshots')
   .option('--limit <n>', 'Max snapshots to show', '10')
+  .option('--all', 'List snapshots across all projects (from global registry)')
   .option('--cwd <path>', 'Working directory')
   .action((opts) => {
+    const limit = parseInt(opts.limit, 10);
+
+    if (opts.all) {
+      const registry = pruneStale();
+      const entries = registry.snapshots.slice(0, limit);
+      if (entries.length === 0) {
+        console.log('No snapshots in global registry yet.');
+        return;
+      }
+      console.log('');
+      console.log('ID                    Project                   Trigger          Files  Time');
+      console.log('────────────────────  ────────────────────────  ───────────────  ─────  ────────────────────');
+      for (const entry of entries) {
+        const date = new Date(entry.timestamp).toLocaleString();
+        const proj = entry.project_name.length > 24 ? entry.project_name.slice(0, 23) + '…' : entry.project_name;
+        console.log(
+          `${entry.id}  ${proj.padEnd(24)}  ${entry.trigger.padEnd(15)}  ${String(entry.files_changed_count).padStart(5)}  ${date}`
+        );
+      }
+      console.log('');
+      return;
+    }
+
     const cwd = opts.cwd ?? process.cwd();
     const config = loadConfig(cwd);
     const storagePath = getStoragePath(cwd, config);
-    const entries = listSnapshots(storagePath, parseInt(opts.limit, 10));
+    const entries = listSnapshots(storagePath, limit);
 
     if (entries.length === 0) {
-      console.log('No snapshots found. Run `/bookmark:snapshot` to create one.');
+      const last = getLastProject();
+      if (last && last.path !== cwd) {
+        console.log('No snapshots in this project.');
+        console.log(`Last active project: ${last.name} (${last.path})`);
+        console.log('Run `bookmark list --all` for the cross-project view.');
+      } else {
+        console.log('No snapshots found. Run `/bookmark:snapshot` to create one.');
+      }
       return;
     }
 
@@ -390,7 +422,21 @@ program
       return;
     }
 
-    const snapshot = loadSnapshot(storagePath, snapshotId);
+    let snapshot = loadSnapshot(storagePath, snapshotId);
+
+    // Registry fallback: not in current CWD, maybe it belongs to another project
+    if (!snapshot) {
+      const entry = findById(snapshotId);
+      if (entry) {
+        const otherStorage = join(entry.project_path, config.storagePath);
+        snapshot = loadSnapshot(otherStorage, snapshotId);
+        if (snapshot) {
+          console.log(`[bookmark: resolved via registry → ${entry.project_name} (${entry.project_path})]`);
+          console.log('');
+        }
+      }
+    }
+
     if (!snapshot) {
       console.log(`Snapshot not found: ${snapshotId}`);
       return;

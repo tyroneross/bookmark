@@ -1,10 +1,12 @@
+import { join } from 'node:path';
 import { parseTranscript } from '../transcript/parser.js';
 import { extractFilesAndTools } from '../transcript/extractor.js';
-import { storeSnapshot, writeLatestMd, loadLatestSnapshot } from './storage.js';
+import { storeSnapshot, writeLatestMd, loadLatestSnapshot, getSnapshotsDir } from './storage.js';
 import { compressToMarkdown } from './compress.js';
 import { writeTrails } from '../trails/writer.js';
 import { loadState, saveState, updateSnapshotTime, incrementSnapshotCount } from '../threshold/state.js';
 import { loadConfig, getStoragePath } from '../config.js';
+import { appendToRegistry } from '../registry.js';
 import type { Snapshot, SnapshotTrigger } from '../types.js';
 
 export interface CaptureOptions {
@@ -64,6 +66,9 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
     const markdown = compressToMarkdown(snapshot);
     writeLatestMd(storagePath, markdown);
     writeTrails(storagePath, snapshot);
+
+    const canonicalFile = join(getSnapshotsDir(storagePath), `${snapshot.snapshot_id}.json`);
+    appendToRegistry(snapshot, canonicalFile);
   }
 
   // 6. Update state + increment snapshot counter

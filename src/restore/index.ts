@@ -10,6 +10,7 @@ import {
 } from '../trails/identity.js';
 import { loadState, saveState, resetForNewSession, incrementCompaction } from '../threshold/state.js';
 import { loadConfig, getStoragePath } from '../config.js';
+import { touchLastProject, getLastProject } from '../registry.js';
 import type { HookOutput, BookmarkState } from '../types.js';
 
 export interface RestoreOptions {
@@ -80,6 +81,9 @@ export function restoreContext(options: RestoreOptions): HookOutput {
         const header = buildPointerFollowHeader(identity, target.canonical_path, targetAge);
         const message = `${header}\n\n${targetBody}`;
         trackRestore(storagePath, message.length);
+        if (identity.points_to_canonical) {
+          touchLastProject(derivProjectFromCanonical(identity.points_to_canonical));
+        }
         return { systemMessage: message };
       }
       // Pointer target missing — fall through to present the pointer body itself
@@ -104,6 +108,7 @@ export function restoreContext(options: RestoreOptions): HookOutput {
     const prefixes = [mismatchWarning, softWarning].filter(Boolean).join('\n\n');
     const message = prefixes ? `${prefixes}\n\n${bodyWithoutIdentity}` : bodyWithoutIdentity;
     trackRestore(storagePath, message.length);
+    touchLastProject(options.cwd);
     return { systemMessage: message };
   }
 
@@ -117,10 +122,38 @@ export function restoreContext(options: RestoreOptions): HookOutput {
   if (latestMd) {
     const message = buildFallbackRestoration(latestMd, snapshotCount);
     trackRestore(storagePath, message.length);
+    touchLastProject(options.cwd);
     return { systemMessage: message };
   }
 
+  // Final fallback: registry last_project (post-/clear from an empty CWD)
+  const last = getLastProject();
+  if (last && last.path !== options.cwd) {
+    const lastStorage = join(last.path, config.storagePath);
+    const lastContext = readContextMd(lastStorage);
+    if (lastContext && isContextMdUseful(lastContext)) {
+      const { bodyWithoutIdentity } = parseIdentity(lastContext);
+      const header = [
+        `[Bookmark: no local context — restored from last-active project via registry]`,
+        '',
+        `Project: ${last.name}`,
+        `Path:    ${last.path}`,
+      ].join('\n');
+      const message = `${header}\n\n${bodyWithoutIdentity}`;
+      trackRestore(storagePath, message.length);
+      return { systemMessage: message };
+    }
+  }
+
   return {};
+}
+
+/** Derive the project path from a canonical bookmark.context.md path. */
+function derivProjectFromCanonical(canonicalPath: string): string {
+  // .../<project>/.bookmark/bookmark.context.md → <project>
+  const marker = `/.bookmark/`;
+  const idx = canonicalPath.lastIndexOf(marker);
+  return idx > 0 ? canonicalPath.slice(0, idx) : canonicalPath;
 }
 
 /** Record a successful restore — chars injected / 4 ≈ tokens */
