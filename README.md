@@ -50,7 +50,14 @@ All extraction uses pattern matching on the transcript. Zero API calls, zero cos
 
 ## Install
 
-**In a project (recommended):**
+**Via Claude Code plugin marketplace (recommended):**
+
+```bash
+/plugin marketplace add tyroneross/bookmark
+/plugin install bookmark@bookmark
+```
+
+**Via npm (in a project):**
 
 ```bash
 npm install @tyroneross/bookmark
@@ -58,19 +65,13 @@ npm install @tyroneross/bookmark
 
 Hooks are configured automatically. Start a Claude Code session and you're covered.
 
-**Globally:**
+**Via npm (globally):**
 
 ```bash
 npm install -g @tyroneross/bookmark
 ```
 
 Then activate in any project by typing `/bookmark:activate` in a Claude Code session, or run `bookmark setup` in your project directory.
-
-**As a Claude Code plugin:**
-
-```bash
-claude plugin add github.com/tyroneross/bookmark
-```
 
 ## Commands
 
