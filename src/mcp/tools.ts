@@ -6,6 +6,7 @@
  */
 
 import { loadConfig, getStoragePath } from "../config.js";
+import { resolveProjectName } from "../registry.js";
 import { captureSnapshot } from "../snapshot/capture.js";
 import { compressToMarkdown } from "../snapshot/compress.js";
 import {
@@ -305,6 +306,7 @@ async function handleList(
     return textResponse("No snapshots found.");
   }
 
+  const projectName = resolveProjectName(cwd);
   const lines = [`Snapshots (${snapshots.length}, most recent first):`];
 
   for (const s of snapshots) {
@@ -312,7 +314,7 @@ async function handleList(
     const ctx = s.context_remaining_pct
       ? ` | ${Math.round(s.context_remaining_pct * 100)}% ctx`
       : "";
-    lines.push(`- ${s.id} | ${date} | ${s.trigger}${ctx}`);
+    lines.push(`- ${s.id} | ${date} | ${s.trigger}${ctx} | ${projectName}`);
   }
 
   return textResponse(lines.join("\n"));

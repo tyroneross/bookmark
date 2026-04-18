@@ -1,10 +1,55 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
 import type { Snapshot, SnapshotTrigger } from './types.js';
 
 const REGISTRY_VERSION = '1.0.0';
 const MAX_ENTRIES = 500;
+
+/**
+ * Resolve a human-readable project name from a directory path.
+ *
+ * Resolution order:
+ * 1. package.json "name" field in cwd
+ * 2. basename of git repo root (walk up until .git is found)
+ * 3. basename of cwd — unless it's the home directory
+ * 4. Fallback: basename(cwd) regardless
+ */
+export function resolveProjectName(cwd: string): string {
+  const home = homedir();
+
+  // 1. package.json name
+  const pkgPath = join(cwd, 'package.json');
+  if (existsSync(pkgPath)) {
+    try {
+      const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8')) as { name?: string };
+      if (pkg.name && pkg.name.trim()) {
+        // Strip scoped package prefix (@scope/name → name)
+        return pkg.name.replace(/^@[^/]+\//, '').trim();
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  // 2. Walk up looking for .git directory
+  let dir = cwd;
+  const root = dirname(home); // Stop before going above home's parent
+  while (dir && dir !== root && dir !== dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) {
+      return basename(dir);
+    }
+    dir = dirname(dir);
+  }
+
+  // 3. Avoid returning home dir basename as the name
+  const cwdBase = basename(cwd);
+  if (cwd === home || cwdBase === basename(home)) {
+    return 'home';
+  }
+
+  return cwdBase;
+}
 
 export interface RegistryEntry {
   id: string;
@@ -66,7 +111,7 @@ export function appendToRegistry(snapshot: Snapshot, canonicalFile: string): voi
       timestamp: snapshot.timestamp,
       trigger: snapshot.trigger,
       project_path: snapshot.project_path,
-      project_name: basename(snapshot.project_path) || snapshot.project_path,
+      project_name: resolveProjectName(snapshot.project_path),
       canonical_file: canonicalFile,
       files_changed_count: snapshot.files_changed.length,
     };
@@ -94,7 +139,7 @@ export function touchLastProject(projectPath: string): void {
     const registry = loadRegistry();
     registry.last_project = {
       path: projectPath,
-      name: basename(projectPath) || projectPath,
+      name: resolveProjectName(projectPath),
       last_activity_at: Date.now(),
     };
     saveRegistry(registry);

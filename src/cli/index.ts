@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { appendFileSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
@@ -167,6 +167,9 @@ program
           });
         } catch { /* file tracking is best-effort */ }
       }
+
+      // Update home-scope pointer to track the most recently active project
+      updateHomePointer(cwd);
 
       const config = loadConfig(cwd);
       const storagePath = getStoragePath(cwd, config);
@@ -515,6 +518,60 @@ program
   });
 
 // ─── Helpers ───
+
+/**
+ * Update the home-directory pointer at ~/.bookmark/bookmark.context.md to point
+ * at the project that just ended a session.
+ *
+ * Only writes when:
+ *   - cwd is NOT the home directory (no self-pointing)
+ *   - the project's .bookmark/bookmark.context.md actually exists
+ *
+ * Wrapped in try/catch — never breaks the main stop flow.
+ */
+function updateHomePointer(cwd: string): void {
+  try {
+    const home = homedir();
+    if (!home || cwd === home) return;
+
+    const projectContextPath = join(cwd, '.bookmark', 'bookmark.context.md');
+    if (!existsSync(projectContextPath)) return;
+
+    // Derive a short project name from the directory basename
+    const projectName = basename(cwd)
+      .toLowerCase()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '');
+
+    const homeBookmarkDir = join(home, '.bookmark');
+    if (!existsSync(homeBookmarkDir)) {
+      mkdirSync(homeBookmarkDir, { recursive: true });
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const pointerContent = [
+      '# Active Work Pointer (home-scoped bookmark)',
+      '',
+      '<!-- BOOKMARK_IDENTITY',
+      'scope: home',
+      'project: POINTER_ONLY',
+      `points_to_project: ${projectName}`,
+      `points_to_repo: ${cwd}`,
+      `points_to_canonical: ${projectContextPath}`,
+      `written: ${today}`,
+      'written_by: bookmark-plugin',
+      '-->',
+      '',
+      '> **This is the HOME-directory pointer**, not a full session context.',
+      `> It delegates to the repo-scope bookmark at \`${projectContextPath}\`.`,
+      '',
+    ].join('\n');
+
+    writeFileSync(join(homeBookmarkDir, 'bookmark.context.md'), pointerContent, 'utf-8');
+  } catch {
+    // Never propagate — pointer update is best-effort
+  }
+}
 
 /**
  * Quality gate for bookmark.context.md — checks that the file has real content,
