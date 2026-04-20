@@ -45,11 +45,14 @@ program
       const sessionId = opts.sessionId ?? hookInput?.session_id;
 
       if (!transcriptPath) {
-        // Try to discover transcript from ~/.claude/projects/
         transcriptPath = discoverTranscriptPath(cwd);
         if (!transcriptPath) {
-          console.error('No transcript found. This command is typically called by hooks.');
-          process.exit(1);
+          if (opts.trigger === 'manual') {
+            console.log('No transcript found. Using existing Bookmark trails for this manual checkpoint.');
+          } else {
+            console.error('No transcript found. This command is typically called by hooks.');
+            process.exit(1);
+          }
         }
       }
 
