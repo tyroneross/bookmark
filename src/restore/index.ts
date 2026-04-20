@@ -10,7 +10,7 @@ import {
 } from '../trails/identity.js';
 import { loadState, saveState, resetForNewSession, incrementCompaction } from '../threshold/state.js';
 import { loadConfig, getStoragePath } from '../config.js';
-import { touchLastProject, getLastProject } from '../registry.js';
+import { touchLastProject } from '../registry.js';
 import type { HookOutput, BookmarkState } from '../types.js';
 
 export interface RestoreOptions {
@@ -126,25 +126,9 @@ export function restoreContext(options: RestoreOptions): HookOutput {
     return { systemMessage: message };
   }
 
-  // Final fallback: registry last_project (post-/clear from an empty CWD)
-  const last = getLastProject();
-  if (last && last.path !== options.cwd) {
-    const lastStorage = join(last.path, config.storagePath);
-    const lastContext = readContextMd(lastStorage);
-    if (lastContext && isContextMdUseful(lastContext)) {
-      const { bodyWithoutIdentity } = parseIdentity(lastContext);
-      const header = [
-        `[Bookmark: no local context — restored from last-active project via registry]`,
-        '',
-        `Project: ${last.name}`,
-        `Path:    ${last.path}`,
-      ].join('\n');
-      const message = `${header}\n\n${bodyWithoutIdentity}`;
-      trackRestore(storagePath, message.length);
-      return { systemMessage: message };
-    }
-  }
-
+  // No local bookmark and no LATEST.md — stay silent rather than inject
+  // another repo's context. The home-scope pointer at ~/.bookmark/bookmark.context.md
+  // is the supported way to redirect from an empty CWD to a canonical project.
   return {};
 }
 

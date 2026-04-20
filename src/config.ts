@@ -1,29 +1,64 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { homedir } from 'node:os';
 import type { BookmarkConfig, SetupPreferences } from './types.js';
 
 const DEFAULTS: BookmarkConfig = {
   storagePath: '.bookmark',
   thresholds: [0.20, 0.30, 0.40, 0.50, 0.60],
   maxThreshold: 0.60,
-  intervalMinutes: 20,
+  intervalMinutes: 5,
   maxDecisions: 15,
   maxOpenItems: 10,
   maxFilesTracked: 20,
   maxErrorsTracked: 10,
-  maxActiveSnapshots: 50,
+  maxActiveSnapshots: 200,
   archiveAfterDays: 30,
   snapshotOnSessionEnd: true,
   restoreOnSessionStart: true,
   verboseLogging: false,
 };
 
+/**
+ * Resolve the enclosing project root for a given CWD.
+ *
+ * Walks up from `cwd` until one of these markers is found:
+ *   1. `.bookmark/` (strongest signal — an already-initialized bookmark root)
+ *   2. `.git/`
+ *   3. `package.json`
+ *
+ * Stops at `$HOME` or filesystem root and returns the original `cwd` unchanged
+ * if nothing is found. This prevents bookmark commands run from a subdirectory
+ * (e.g. `repo/src/foo/`) from creating or reading a stray `.bookmark/` in the
+ * wrong place.
+ */
+export function resolveProjectRoot(cwd: string): string {
+  const home = homedir();
+  let dir = cwd;
+
+  while (dir && dir !== dirname(dir)) {
+    if (
+      existsSync(join(dir, '.bookmark')) ||
+      existsSync(join(dir, '.git')) ||
+      existsSync(join(dir, 'package.json'))
+    ) {
+      return dir;
+    }
+    if (dir === home) break;
+    dir = dirname(dir);
+  }
+
+  return cwd;
+}
+
 export function loadConfig(cwd?: string): BookmarkConfig {
   const config = { ...DEFAULTS };
 
-  // Project-level config
+  // Project-level config — read from resolved project root, not raw CWD,
+  // so running from a subdirectory still picks up the repo's config.
   if (cwd) {
-    const projectConfigPath = join(cwd, '.bookmark', 'config.json');
+    const root = resolveProjectRoot(cwd);
+    const projectConfigPath = join(root, '.bookmark', 'config.json');
     if (existsSync(projectConfigPath)) {
       try {
         const projectConfig = JSON.parse(readFileSync(projectConfigPath, 'utf-8'));
@@ -54,7 +89,14 @@ export function loadConfig(cwd?: string): BookmarkConfig {
 
 export function getStoragePath(cwd: string, config?: BookmarkConfig): string {
   const cfg = config ?? loadConfig(cwd);
-  return join(cwd, cfg.storagePath);
+  // If storagePath is absolute (env override), use it verbatim.
+  // Otherwise anchor it at the resolved project root so subdirectory calls
+  // still read/write the canonical repo-level .bookmark/.
+  if (cfg.storagePath.startsWith('/')) {
+    return cfg.storagePath;
+  }
+  const root = resolveProjectRoot(cwd);
+  return join(root, cfg.storagePath);
 }
 
 /**

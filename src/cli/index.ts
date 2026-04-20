@@ -16,7 +16,8 @@ import { checkTimeInterval } from '../threshold/time-based.js';
 import { loadConfig, getStoragePath, writeConfig } from '../config.js';
 import { configureHooks } from '../setup/configure-hooks.js';
 import { ensureProjectBootstrapped, setupProject } from '../setup/auto-setup.js';
-import { findById, pruneStale, getLastProject } from '../registry.js';
+import { findById, pruneStale, getLastProject, loadRegistry } from '../registry.js';
+import { parseIdentity } from '../trails/identity.js';
 import type { HookInput, SnapshotTrigger } from '../types.js';
 
 const program = new Command();
@@ -449,6 +450,104 @@ program
   });
 
 program
+  .command('clear')
+  .description('Write a home-scope pointer to the most-recent project and print its context')
+  .option('--project <path>', 'Point at a specific project root instead of the last-active one')
+  .option('--no-print', 'Skip printing the canonical context to stdout')
+  .option('--no-pointer', 'Skip writing ~/.bookmark/bookmark.context.md pointer')
+  .action((opts) => {
+    // Resolve target project:
+    // 1. explicit --project wins
+    // 2. else registry.last_project, but skip if it points at $HOME (stale/bad state)
+    // 3. else most-recent snapshot whose project_path !== $HOME and has a bookmark.context.md
+    const home = homedir();
+
+    let targetPath: string | null = null;
+    let targetName: string | null = null;
+
+    if (opts.project) {
+      targetPath = opts.project;
+      targetName = basename(opts.project);
+    } else {
+      const last = getLastProject();
+      if (last && last.path !== home) {
+        targetPath = last.path;
+        targetName = last.name;
+      } else {
+        // Fall back: scan registry snapshots for the most recent real project.
+        const registry = loadRegistry();
+        for (const entry of registry.snapshots) {
+          if (entry.project_path === home) continue;
+          const candidate = join(entry.project_path, '.bookmark', 'bookmark.context.md');
+          if (existsSync(candidate)) {
+            targetPath = entry.project_path;
+            targetName = entry.project_name;
+            break;
+          }
+        }
+      }
+    }
+
+    if (!targetPath || !targetName) {
+      console.error('No last-active project found in the registry. Run `bookmark list --all`.');
+      console.error('Or pass --project <path> to point at a specific project.');
+      process.exit(1);
+    }
+
+    let canonicalPath = join(targetPath, '.bookmark', 'bookmark.context.md');
+    if (!existsSync(canonicalPath)) {
+      console.error(`No bookmark.context.md at ${canonicalPath}.`);
+      console.error('That project has no session summary to restore from.');
+      process.exit(1);
+    }
+
+    let canonicalContent = readFileSync(canonicalPath, 'utf-8');
+
+    // If target is itself a home-scope pointer, follow it to the real canonical file.
+    const { identity } = parseIdentity(canonicalContent);
+    if (identity?.scope === 'home' && identity.points_to_canonical && existsSync(identity.points_to_canonical)) {
+      canonicalPath = identity.points_to_canonical;
+      canonicalContent = readFileSync(canonicalPath, 'utf-8');
+      if (identity.points_to_project) targetName = identity.points_to_project;
+      const marker = '/.bookmark/';
+      const idx = canonicalPath.lastIndexOf(marker);
+      if (idx > 0) targetPath = canonicalPath.slice(0, idx);
+    }
+
+    if (opts.pointer !== false) {
+      const homeDir = join(homedir(), '.bookmark');
+      if (!existsSync(homeDir)) mkdirSync(homeDir, { recursive: true });
+
+      const pointerBody = [
+        `# Bookmark Pointer — ${targetName}`,
+        '',
+        '<!-- BOOKMARK_IDENTITY',
+        'scope: home',
+        'project: POINTER_ONLY',
+        `points_to_project: ${targetName}`,
+        `points_to_canonical: ${canonicalPath}`,
+        `written: ${new Date().toISOString().slice(0, 10)}`,
+        'written_by: bookmark-clear',
+        '-->',
+        '',
+        `Redirects SessionStart to: ${targetName}`,
+        `Canonical file: ${canonicalPath}`,
+        '',
+        '*This file was written by `bookmark clear`. The next Claude Code session',
+        'started from this directory (or any directory without its own .bookmark/)',
+        'will follow the pointer above and restore the canonical context.*',
+      ].join('\n');
+
+      writeFileSync(join(homeDir, 'bookmark.context.md'), pointerBody, 'utf-8');
+      console.error(`[bookmark] Home pointer → ${targetName} (${canonicalPath})`);
+    }
+
+    if (opts.print !== false) {
+      console.log(canonicalContent);
+    }
+  });
+
+program
   .command('config')
   .description('Show or set configuration')
   .option('--interval <minutes>', 'Set time-based interval')
@@ -677,7 +776,7 @@ function askQuestion(question: string): Promise<string> {
  * Interactive (or default) setup for bookmark in a project.
  */
 async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
-  let intervalMinutes = 20;
+  let intervalMinutes = 5;
 
   console.log('');
   console.log(`${BOLD}Bookmark — Context Snapshot Setup${RESET}`);
@@ -687,14 +786,15 @@ async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
   if (!useDefaults) {
     // Prompt for interval
     console.log('Snapshot interval?');
-    console.log('  1) 10 minutes (frequent)');
-    console.log('  2) 15 minutes');
-    console.log(`  3) 20 minutes ${DIM}(recommended)${RESET}`);
-    console.log('  4) 30 minutes (conservative)');
+    console.log(`  1) 5 minutes ${DIM}(recommended)${RESET}`);
+    console.log('  2) 10 minutes');
+    console.log('  3) 15 minutes');
+    console.log('  4) 20 minutes');
+    console.log('  5) 30 minutes (conservative)');
     console.log('');
     const intervalAnswer = await askQuestion(`${DIM}> ${RESET}`);
-    const intervalMap: Record<string, number> = { '1': 10, '2': 15, '3': 20, '4': 30 };
-    intervalMinutes = intervalMap[intervalAnswer] ?? 20;
+    const intervalMap: Record<string, number> = { '1': 5, '2': 10, '3': 15, '4': 20, '5': 30 };
+    intervalMinutes = intervalMap[intervalAnswer] ?? 5;
     console.log('');
   }
 

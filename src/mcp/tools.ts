@@ -17,7 +17,27 @@ import {
 } from "../snapshot/storage.js";
 import { restoreContext } from "../restore/index.js";
 import { loadState } from "../threshold/state.js";
+import { readContextMd } from "../trails/reader.js";
+import { parseIdentity, validateRepoIdentity } from "../trails/identity.js";
 import type { SnapshotTrigger } from "../types.js";
+
+/**
+ * If the bookmark.context.md at `storagePath` declares a different repo_path
+ * than the current CWD, return a one-line warning to prepend to MCP output.
+ * Returns null when no bookmark file exists, no identity block is present,
+ * or the identity matches.
+ */
+function identityMismatchWarning(storagePath: string, cwd: string): string | null {
+  const raw = readContextMd(storagePath);
+  if (!raw) return null;
+  const { identity } = parseIdentity(raw);
+  if (!identity) return null;
+  return validateRepoIdentity(identity, cwd);
+}
+
+function prefixWarning(warning: string | null, body: string): string {
+  return warning ? `${warning}\n\n${body}` : body;
+}
 
 // --- Response helpers ---
 
@@ -239,8 +259,9 @@ async function handleRestore(
       return errorResponse(`Snapshot "${snapshotId}" not found.`);
     }
 
+    const warning = identityMismatchWarning(storagePath, cwd);
     const markdown = compressToMarkdown(snapshot);
-    return textResponse(markdown);
+    return textResponse(prefixWarning(warning, markdown));
   }
 
   // Restore latest context using the standard restoration logic
@@ -266,8 +287,10 @@ async function handleStatus(): Promise<{
   const count = getSnapshotCount(storagePath);
   const state = loadState(storagePath);
   const latest = loadLatestSnapshot(storagePath);
+  const warning = identityMismatchWarning(storagePath, cwd);
 
   const lines = [`Snapshot inventory: ${count} snapshots`];
+  lines.push(`Storage: ${storagePath}`);
 
   if (latest) {
     const age = Date.now() - latest.timestamp;
@@ -289,7 +312,7 @@ async function handleStatus(): Promise<{
     `Snapshot interval: ${state.snapshot_interval_minutes} minutes`
   );
 
-  return textResponse(lines.join("\n"));
+  return textResponse(prefixWarning(warning, lines.join("\n")));
 }
 
 async function handleList(
@@ -301,13 +324,14 @@ async function handleList(
   const limit = (args.limit as number) || 10;
 
   const snapshots = listSnapshots(storagePath, limit);
+  const warning = identityMismatchWarning(storagePath, cwd);
 
   if (snapshots.length === 0) {
-    return textResponse("No snapshots found.");
+    return textResponse(prefixWarning(warning, `No snapshots found in ${storagePath}.`));
   }
 
   const projectName = resolveProjectName(cwd);
-  const lines = [`Snapshots (${snapshots.length}, most recent first):`];
+  const lines = [`Snapshots (${snapshots.length}, most recent first) in ${storagePath}:`];
 
   for (const s of snapshots) {
     const date = new Date(s.timestamp).toISOString().replace("T", " ").slice(0, 19);
@@ -317,7 +341,7 @@ async function handleList(
     lines.push(`- ${s.id} | ${date} | ${s.trigger}${ctx} | ${projectName}`);
   }
 
-  return textResponse(lines.join("\n"));
+  return textResponse(prefixWarning(warning, lines.join("\n")));
 }
 
 async function handleShow(
@@ -340,5 +364,6 @@ async function handleShow(
     );
   }
 
-  return textResponse(compressToMarkdown(snapshot));
+  const warning = identityMismatchWarning(storagePath, cwd);
+  return textResponse(prefixWarning(warning, compressToMarkdown(snapshot)));
 }

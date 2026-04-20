@@ -13,7 +13,7 @@ function defaultState(): BookmarkState {
     current_threshold: 0.20,
     last_snapshot_time: 0,
     last_event_time: 0,
-    snapshot_interval_minutes: 20,
+    snapshot_interval_minutes: 5,
     session_history: [],
   };
 }
