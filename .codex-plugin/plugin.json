@@ -1,0 +1,31 @@
+{
+  "name": "bookmark",
+  "version": "0.3.2",
+  "description": "Session context continuity \u2014 auto-save and restore context across compactions and terminal closures",
+  "author": {
+    "name": "Tyrone Ross"
+  },
+  "homepage": "https://github.com/tyroneross/bookmark",
+  "repository": "https://github.com/tyroneross/bookmark",
+  "license": "MIT",
+  "keywords": [
+    "context",
+    "snapshots",
+    "session-continuity",
+    "compaction",
+    "memory"
+  ],
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Bookmark",
+    "shortDescription": "Session context continuity \u2014 auto-save and restore context across compactions and terminal closures",
+    "longDescription": "Session context continuity \u2014 auto-save and restore context across compactions and terminal closures",
+    "developerName": "Ross Labs",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ]
+  }
+}
