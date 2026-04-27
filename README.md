@@ -159,7 +159,7 @@ restoration unambiguous — a bookmark can't be mistaken for a different repo's 
 <!-- BOOKMARK_IDENTITY
 scope: repo
 project: travel-planner
-repo_path: /Users/me/Desktop/git-folder/Travel Planner
+repo_path: /Users/me/dev/git-folder/Travel Planner
 branch: feature/summer-camps
 head: 4988383
 written: 2026-04-11
@@ -188,7 +188,7 @@ session context. It contains `points_to_canonical` naming the real repo-scoped f
 scope: home
 project: POINTER_ONLY
 points_to_project: travel-planner
-points_to_canonical: /Users/me/Desktop/git-folder/Travel Planner/.bookmark/bookmark.context.md
+points_to_canonical: /Users/me/dev/git-folder/Travel Planner/.bookmark/bookmark.context.md
 -->
 ```
 
