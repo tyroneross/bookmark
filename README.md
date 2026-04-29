@@ -48,6 +48,17 @@ Each snapshot extracts from the conversation transcript — no LLM calls needed:
 
 All extraction uses pattern matching on the transcript. Zero API calls, zero cost, zero latency.
 
+### File paths in snapshots are now project-relative
+
+As of v0.3.3, file paths in `.bookmark/snapshots/SNAP_*.json` are stored
+relative to `project_path` (e.g. `src/foo.ts` instead of
+`/Users/me/dev/git-folder/myapp/src/foo.ts`). Older snapshots may carry
+pre-move absolute paths that went stale when a project was relocated
+(e.g. `~/Desktop/git-folder/...` → `~/dev/git-folder/...`); those are not
+auto-rewritten — they're left intact so the historical record stays
+honest. Going forward, a project move only invalidates `project_path`
+itself, not the per-file entries inside each snapshot.
+
 ## Install
 
 **Via Claude Code plugin marketplace (recommended):**

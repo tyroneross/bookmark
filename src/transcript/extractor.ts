@@ -1,4 +1,29 @@
+import { relative, isAbsolute } from 'node:path';
 import type { TranscriptEntry, FileActivity, FileOperation } from '../types.js';
+
+/**
+ * Convert an absolute file path to a project-relative one. Falls back to
+ * the original path when projectPath is missing or the file isn't under
+ * it (e.g. a tool call that touched something outside the repo, like a
+ * scratchpad in /tmp).
+ *
+ * Why: snapshots used to embed absolute paths
+ * (e.g. /Users/tyroneross/Desktop/git-folder/...). When the project moved
+ * to ~/dev/git-folder/... every old absolute path went stale, defeating
+ * the whole point of the snapshot. Going forward we store paths relative
+ * to project_path so a move only needs the project_path field updated
+ * (or — for git-tracked moves — nothing at all).
+ */
+function toProjectRelative(filePath: string, projectPath?: string): string {
+  if (!projectPath || !filePath) return filePath;
+  if (!isAbsolute(filePath)) return filePath;
+  if (!filePath.startsWith(projectPath)) return filePath;
+  const rel = relative(projectPath, filePath);
+  // `relative` returns '' when paths match exactly; preserve a sentinel so
+  // downstream code knows it's the project root rather than the empty
+  // string (which can read as "missing data").
+  return rel === '' ? '.' : rel;
+}
 
 /**
  * Extractor v0.3 — file tracking + tool summary only.
@@ -95,7 +120,11 @@ function extractFilesChanged(entries: TranscriptEntry[], projectPath?: string): 
       ? [...changes].slice(0, 4).join(', ')
       : undefined;
     result.push({
-      path,
+      // Store relative to projectPath so snapshots survive a project move.
+      // The original absolute path is preserved in `absolute_path` for
+      // diagnostic use; consumers should prefer `path` joined to the
+      // current project_path.
+      path: toProjectRelative(path, projectPath),
       operations: [...ops],
       lines_changed: fileLinesChanged.get(path) ?? 0,
       summary,
