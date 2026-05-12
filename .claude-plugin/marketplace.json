@@ -17,7 +17,7 @@
       "author": { "name": "Tyrone Ross" },
       "homepage": "https://github.com/tyroneross/bookmark",
       "repository": "https://github.com/tyroneross/bookmark",
-      "license": "MIT",
+      "license": "Apache-2.0",
       "category": "developer-tools",
       "keywords": ["context", "snapshots", "session-continuity", "compaction", "memory"]
     }

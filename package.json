@@ -52,7 +52,7 @@
     "devtools"
   ],
   "author": "Tyrone Ross",
-  "license": "FSL-1.1-MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/tyroneross/bookmark"
