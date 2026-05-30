@@ -70,17 +70,98 @@ Defined in `hooks/hooks.json`. All are `command` type, invoking the CLI via `npx
 
 To change hook behavior, edit `hooks/hooks.json`. Timeouts are in milliseconds (Stop: 10000, PreCompact: 10000, SessionStart: 5000, UserPromptSubmit: 3000 async).
 
-## Commands (5 slash commands)
+## Commands (7 slash commands)
 
 Each command is a single Markdown file in `commands/`. These files are the single source of truth — they are read by both the plugin system and `npm postinstall`. Do not split logic between a command file and a separate implementation file.
 
 | Command | File | Purpose |
 |---------|------|---------|
 | `/bookmark:activate` | `commands/activate.md` | Run setup for a project; configure hooks and storage |
+| `/bookmark:bookmark` | `commands/bookmark.md` | Show current session context and bookmark status (bare command) |
 | `/bookmark:list` | `commands/list.md` | List all snapshots with timestamps and triggers |
 | `/bookmark:restore` | `commands/restore.md` | Load and display snapshot context for continuation |
 | `/bookmark:snapshot` | `commands/snapshot.md` | Capture a manual snapshot and write `bookmark.context.md` |
 | `/bookmark:status` | `commands/status.md` | Show snapshot stats: count, freshness, thresholds |
+| `/bookmark:verify` | `commands/verify.md` | Verify `bookmark.context.md` against 5 durability rules |
+
+## Key behaviors (Codex must honor)
+
+### Identity block — required in every `bookmark.context.md`
+
+Every `bookmark.context.md` must start with a `BOOKMARK_IDENTITY` HTML comment. Without it
+the restore path treats the file as legacy and skips path validation entirely.
+
+```markdown
+<!-- BOOKMARK_IDENTITY
+scope: repo
+project: my-app
+repo_path: /Users/me/dev/git-folder/my-app
+branch: main
+head: abc1234
+written: 2026-05-30
+-->
+```
+
+Supported fields (defined in `src/trails/identity.ts` `BookmarkIdentity`):
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `scope` | Yes | `repo` (active context) or `home` (pointer only) |
+| `project` | Yes | Short kebab-case project name |
+| `repo_path` | Yes | Absolute path — used for path validation at restore |
+| `branch` | Recommended | Git branch at write time |
+| `head` | Recommended | Short commit SHA at write time |
+| `base` | Optional | Base branch / merge base |
+| `written` | Recommended | ISO date (`YYYY-MM-DD`) |
+| `written_by` | Optional | Agent or human that wrote it |
+
+Unknown keys are preserved for forward compatibility. The parser is in
+`src/trails/identity.ts` (`parseIdentity`).
+
+**Path validation**: at restore, if `repo_path` disagrees with the CWD (and CWD is not a
+subdirectory of it), the restored content is prefixed with an identity-mismatch warning.
+Agents must not treat a mismatched restore as authoritative without surfacing the warning to
+the user.
+
+**Home-scope pointers**: a `scope: home` file declares `points_to_canonical` pointing at the
+repo-scoped file. SessionStart follows the pointer automatically; the pointer body itself is
+never served as active session context.
+
+### Hard staleness block — 72 hours
+
+Source constant: `STALENESS_HARD_BLOCK_HOURS = 72` in `src/restore/index.ts`.
+
+| Age | Behavior |
+|-----|----------|
+| < 24 h | Restored normally |
+| 24 h – < 72 h | Restored with a soft warning noting age |
+| ≥ 72 h | **Auto-restore is blocked.** The session receives a staleness message instead of the stale content, directing the user to `/bookmark:list` or manual file read. |
+
+**Codex rule**: do NOT surface a ≥ 72 h bookmark as current session context. The hard block
+exists because a soft warning on a 14-day-old file creates a confident wrong start — the
+warning reads as noise and the agent acts on stale facts. When the restore path returns a
+staleness message, present it verbatim and prompt the user for direction rather than
+proceeding on the old context.
+
+### `/bookmark:verify` — durability quality check
+
+Run after writing `bookmark.context.md` to confirm it will survive a cold restart:
+
+```bash
+python3 ~/.claude/scripts/bookmark-verify.py
+```
+
+Checks five rules: (1) absolute paths only, (2) no volatile TaskList IDs, (3) `## Next steps`
+section with at least one file path, (4) `## Sources of truth` section present,
+(5) no relative time references (yesterday / last week / earlier today). Exits non-zero on
+FAIL and prints line numbers + rule violations. JSON snapshot paths (`.json`) are rejected
+with exit code 3 — the verifier targets the rendered `.md` file only.
+
+### `~/.bookmark/registry.json` — cross-project discovery
+
+`src/registry.ts` maintains a global registry at `~/.bookmark/registry.json` (up to 500
+entries). `last_project` records the most recently active project path and name. Agents can
+read this to locate a project's canonical bookmark when the CWD is unknown.
 
 ## Skill (1)
 
