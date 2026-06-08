@@ -1,7 +1,7 @@
 {
   "name": "@tyroneross/bookmark",
   "version": "0.3.2",
-  "description": "Context snapshots for Claude Code — session continuity across compactions and terminals",
+  "description": "Context snapshots for agent sessions, compactions, and terminal workflows",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -25,6 +25,7 @@
     "hooks",
     "agents",
     ".claude-plugin",
+    ".codex-plugin",
     ".mcp.json",
     "scripts/install-plugin.sh",
     "CLAUDE.md",
@@ -43,7 +44,6 @@
     "mcp": "node dist/mcp/server.js"
   },
   "keywords": [
-    "claude-code",
     "context",
     "snapshots",
     "session-continuity",
@@ -51,11 +51,11 @@
     "memory",
     "devtools"
   ],
-  "author": "Tyrone Ross",
+  "author": "Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/tyroneross/bookmark"
+    "url": "git+https://github.com/tyroneross/bookmark.git"
   },
   "homepage": "https://github.com/tyroneross/bookmark#readme",
   "bugs": {
@@ -63,6 +63,10 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "dependencies": {
     "commander": "^14.0.0",
