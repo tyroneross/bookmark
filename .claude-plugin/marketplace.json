@@ -13,13 +13,20 @@
       "name": "bookmark",
       "source": "./",
       "description": "Session context continuity — auto-save and restore context across compactions and terminal closures",
-      "version": "0.3.2",
-      "author": { "name": "Tyrone Ross" },
+      "author": {
+        "name": "Tyrone Ross"
+      },
       "homepage": "https://github.com/tyroneross/bookmark",
       "repository": "https://github.com/tyroneross/bookmark",
       "license": "Apache-2.0",
       "category": "developer-tools",
-      "keywords": ["context", "snapshots", "session-continuity", "compaction", "memory"]
+      "keywords": [
+        "context",
+        "snapshots",
+        "session-continuity",
+        "compaction",
+        "memory"
+      ]
     }
   ]
 }

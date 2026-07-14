@@ -1,7 +1,6 @@
 {
   "name": "bookmark",
-  "version": "0.3.2",
-  "description": "Session context continuity \u2014 auto-save and restore context across compactions and terminal closures",
+  "description": "Session context continuity — auto-save and restore context across compactions and terminal closures",
   "author": {
     "name": "Tyrone Ross"
   },
@@ -19,8 +18,8 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Bookmark",
-    "shortDescription": "Session context continuity \u2014 auto-save and restore context across compactions and terminal closures",
-    "longDescription": "Session context continuity \u2014 auto-save and restore context across compactions and terminal closures",
+    "shortDescription": "Session context continuity — auto-save and restore context across compactions and terminal closures",
+    "longDescription": "Session context continuity — auto-save and restore context across compactions and terminal closures",
     "developerName": "Ross Labs",
     "category": "Productivity",
     "capabilities": [
