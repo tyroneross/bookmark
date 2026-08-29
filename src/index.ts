@@ -30,6 +30,7 @@ export {
   writeLatestMd,
   getSnapshotCount,
   ensureStorageDirs,
+  generateSnapshotId,
 } from './snapshot/storage.js';
 export { restoreContext } from './restore/index.js';
 export { parseTranscript } from './transcript/parser.js';
@@ -37,6 +38,11 @@ export { extractFilesAndTools } from './transcript/extractor.js';
 export { loadState, saveState } from './threshold/state.js';
 export { getThreshold, shouldSnapshotByThreshold } from './threshold/adaptive.js';
 export { checkTimeInterval } from './threshold/time-based.js';
+export type {
+  ContextUsage,
+  ContextUsageObservation,
+  UnknownContextLimitUsage,
+} from './threshold/token-usage.js';
 export {
   handledThresholdsForUsage,
   readLatestContextUsage,

@@ -89,6 +89,7 @@ export function resetForNewSession(state: BookmarkState, sessionId: string, thre
     latest_context_limit_tokens: undefined,
     latest_context_used_pct: undefined,
     latest_context_observed_at: undefined,
+    unknown_context_limit_notified_model: undefined,
   };
 }
 

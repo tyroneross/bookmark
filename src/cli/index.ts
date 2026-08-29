@@ -174,13 +174,13 @@ program
       const storagePath = getStoragePath(cwd, config);
       const state = loadState(storagePath);
       const timeCheck = checkTimeInterval(state);
-      const usage = readLatestContextUsage(
+      const observation = readLatestContextUsage(
         transcriptPath,
         config.contextLimitTokens,
         hookInput?.prompt
       );
 
-      if (!usage) {
+      if (!observation) {
         if (timeCheck.shouldSnapshot) {
           await captureSnapshot({
             trigger: 'time_interval',
@@ -193,6 +193,57 @@ program
         return;
       }
 
+      if (observation.status === 'unknown_context_limit') {
+        const shouldNotify = state.unknown_context_limit_notified_model !== observation.model;
+        const observedState = {
+          ...state,
+          last_event_time: Date.now(),
+          latest_model: observation.model,
+          latest_context_tokens: observation.usedTokens,
+          latest_context_limit_tokens: undefined,
+          latest_context_used_pct: undefined,
+          latest_context_observed_at: Date.now(),
+          unknown_context_limit_notified_model: observation.model,
+        };
+
+        if (timeCheck.shouldSnapshot) {
+          await captureSnapshot({
+            trigger: 'time_interval',
+            transcriptPath,
+            cwd,
+            sessionId: hookInput?.session_id,
+          });
+          const refreshedState = loadState(storagePath);
+          saveState(storagePath, {
+            ...refreshedState,
+            last_event_time: observedState.last_event_time,
+            latest_model: observedState.latest_model,
+            latest_context_tokens: observedState.latest_context_tokens,
+            latest_context_limit_tokens: observedState.latest_context_limit_tokens,
+            latest_context_used_pct: observedState.latest_context_used_pct,
+            latest_context_observed_at: observedState.latest_context_observed_at,
+            unknown_context_limit_notified_model: observedState.unknown_context_limit_notified_model,
+          });
+        } else {
+          saveState(storagePath, observedState);
+        }
+
+        if (shouldNotify) {
+          console.log(JSON.stringify({
+            systemMessage:
+              `Bookmark detected ${observation.model}, but its context limit is not verified. ` +
+              'Token-threshold capture is paused for this model. ' +
+              'Set the verified limit with `bookmark config --context-limit <tokens>`. ' +
+              `Manual snapshots and ${state.snapshot_interval_minutes}-minute periodic snapshots remain active.`,
+          }));
+        } else {
+          console.log(JSON.stringify({}));
+        }
+        return;
+      }
+
+      const usage = observation;
+
       const observedState = {
         ...state,
         last_event_time: Date.now(),
@@ -201,6 +252,7 @@ program
         latest_context_limit_tokens: usage.contextLimitTokens,
         latest_context_used_pct: usage.usedFraction,
         latest_context_observed_at: Date.now(),
+        unknown_context_limit_notified_model: undefined,
       };
       const handledThresholds = handledThresholdsForUsage(
         usage.usedFraction,
@@ -231,6 +283,7 @@ program
             latest_context_limit_tokens: observedState.latest_context_limit_tokens,
             latest_context_used_pct: observedState.latest_context_used_pct,
             latest_context_observed_at: observedState.latest_context_observed_at,
+            unknown_context_limit_notified_model: observedState.unknown_context_limit_notified_model,
             token_thresholds_triggered: observedState.token_thresholds_triggered,
           });
         } else {
@@ -256,6 +309,7 @@ program
         latest_context_limit_tokens: usage.contextLimitTokens,
         latest_context_used_pct: usage.usedFraction,
         latest_context_observed_at: Date.now(),
+        unknown_context_limit_notified_model: undefined,
         token_thresholds_triggered: [
           ...new Set([...(handledThresholds ?? []), ...crossed]),
         ],
@@ -411,7 +465,7 @@ program
     console.log(`  Snapshots:          ${count}`);
     console.log(`  Compaction cycles:  ${state.compaction_count}`);
     console.log(`  Snapshot interval:  ${state.snapshot_interval_minutes} minutes`);
-    console.log(`  New-session alert:  ${config.tokenThresholds.map(t => `${Math.round(t * 100)}%`).join(', ')} used`);
+    console.log(`  New-session alert:  ${config.tokenThresholds.map(t => `${Math.round(t * 100)}%`).join(', ')} used when limit is known`);
 
     if (state.latest_context_used_pct !== undefined) {
       const usedPct = Math.round(state.latest_context_used_pct * 100);
@@ -419,6 +473,10 @@ program
       const limitTokens = state.latest_context_limit_tokens ?? 0;
       console.log(`  Context usage:      ${usedPct}% (${formatTokenCount(usedTokens)} / ${formatTokenCount(limitTokens)})`);
       if (state.latest_model) console.log(`  Active model:       ${state.latest_model}`);
+    } else if (state.latest_model && state.latest_context_tokens !== undefined) {
+      console.log(`  Context usage:      ${formatTokenCount(state.latest_context_tokens)} tokens; limit unknown`);
+      console.log(`  Active model:       ${state.latest_model}`);
+      console.log('  Required action:    bookmark config --context-limit <tokens>');
     }
 
     if (state.last_snapshot_time > 0) {

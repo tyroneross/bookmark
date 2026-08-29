@@ -15,6 +15,7 @@ function state(): BookmarkState {
     token_thresholds_triggered: [0.75],
     latest_model: 'claude-opus-5',
     latest_context_used_pct: 0.8,
+    unknown_context_limit_notified_model: 'claude-opus-5',
   };
 }
 
@@ -31,5 +32,6 @@ describe('token threshold lifecycle', () => {
     expect(next.token_thresholds_triggered).toEqual([]);
     expect(next.latest_model).toBeUndefined();
     expect(next.latest_context_used_pct).toBeUndefined();
+    expect(next.unknown_context_limit_notified_model).toBeUndefined();
   });
 });

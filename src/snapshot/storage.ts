@@ -1,15 +1,18 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import type { Snapshot, SnapshotIndex, SnapshotEntry } from '../types.js';
 
 const INDEX_VERSION = '1.0.0';
 
-function generateSnapshotId(): string {
+export function generateSnapshotId(): string {
   const now = new Date();
   const pad = (n: number, len = 2) => String(n).padStart(len, '0');
   const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
   const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  return `SNAP_${date}_${time}`;
+  const milliseconds = pad(now.getMilliseconds(), 3);
+  const entropy = randomBytes(2).toString('hex');
+  return `SNAP_${date}_${time}_${milliseconds}_${entropy}`;
 }
 
 export function getSnapshotsDir(storagePath: string): string {
@@ -52,7 +55,7 @@ export function storeSnapshot(storagePath: string, snapshot: Snapshot): string {
 
 export function loadSnapshot(storagePath: string, snapshotId: string): Snapshot | null {
   // Validate snapshot ID format to prevent path traversal
-  if (!/^SNAP_\d{8}_\d{6}$/.test(snapshotId)) {
+  if (!/^SNAP_\d{8}_\d{6}(?:_\d{3}_[a-f0-9]{4})?$/.test(snapshotId)) {
     return null;
   }
 

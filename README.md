@@ -97,6 +97,7 @@ Use these inside Claude Code:
 
 ```bash
 bookmark status              # Show stats
+bookmark snapshot            # Take a manual snapshot now
 bookmark list                # List snapshots
 bookmark show --latest       # Show latest snapshot content
 bookmark show SNAP_ID        # Show specific snapshot
@@ -115,8 +116,10 @@ At 75% used, Bookmark captures a `token_threshold` snapshot, shows a warning, as
 refresh `bookmark.context.md`, and recommends a new session. It alerts once until a new session
 or lower post-compaction usage re-arms the threshold.
 
-Current 1M-context Claude families are resolved by model ID. Other models use a conservative
-200K fallback. The mapping follows Anthropic's
+Bookmark resolves context limits only for model IDs documented by Anthropic. If the transcript
+reports an unknown model, Bookmark pauses token-threshold capture, asks the user for the verified
+limit, and keeps manual and periodic snapshots active. It never guesses a context limit. The
+mapping follows Anthropic's
 [context-window documentation](https://platform.claude.com/docs/en/build-with-claude/context-windows).
 Override either value when needed:
 
@@ -124,6 +127,22 @@ Override either value when needed:
 bookmark config --token-threshold 75
 bookmark config --context-limit 500000
 ```
+
+## Hooks
+
+Bookmark installs four hooks because each protects a separate lifecycle boundary:
+
+| Hook | Needed for |
+|------|------------|
+| `SessionStart` | Restore the latest durable handoff into a new session |
+| `UserPromptSubmit` | Run periodic capture and model-aware token-threshold checks |
+| `PreCompact` | Save a final mechanical checkpoint before compaction |
+| `Stop` | Save at exit and require a complete semantic handoff once |
+
+`UserPromptSubmit` is the only hook required for periodic and token-threshold capture. The other
+three complete the restore, pre-compaction, and exit continuity path.
+
+Manual capture does not require another hook: run `/bookmark:snapshot` or `bookmark snapshot`.
 
 ## Time-Based Snapshots
 

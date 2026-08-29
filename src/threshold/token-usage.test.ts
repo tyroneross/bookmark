@@ -16,11 +16,12 @@ afterEach(() => {
 });
 
 describe('resolveContextLimit', () => {
-  it('uses current 1M model families and a conservative 200K fallback', () => {
+  it('uses verified limits for documented model families', () => {
     expect(resolveContextLimit('claude-opus-5')).toBe(1_000_000);
     expect(resolveContextLimit('claude-sonnet-4-6')).toBe(1_000_000);
     expect(resolveContextLimit('claude-haiku-4-5-20251001')).toBe(200_000);
-    expect(resolveContextLimit('future-unknown-model')).toBe(200_000);
+    expect(resolveContextLimit('anthropic.claude-haiku-4-5-20251001-v1:0')).toBe(200_000);
+    expect(resolveContextLimit('future-unknown-model')).toBeNull();
   });
 
   it('honors an explicit override', () => {
@@ -61,10 +62,28 @@ describe('readLatestContextUsage', () => {
 
     const usage = readLatestContextUsage(transcript, undefined, 'test');
     expect(usage).toMatchObject({
+      status: 'measured',
       model: 'claude-opus-5',
       usedTokens: 750_001,
       contextLimitTokens: 1_000_000,
       usedFraction: 0.750001,
+      source: 'transcript_usage',
+    });
+  });
+
+  it('reports measured tokens without inventing a limit for an unknown model', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bookmark-token-'));
+    tempDirs.push(dir);
+    const transcript = join(dir, 'session.jsonl');
+    writeFileSync(transcript, JSON.stringify({ type: 'assistant', message: {
+      model: 'future-unknown-model',
+      usage: { input_tokens: 12_345 },
+    } }));
+
+    expect(readLatestContextUsage(transcript)).toEqual({
+      status: 'unknown_context_limit',
+      model: 'future-unknown-model',
+      usedTokens: 12_345,
       source: 'transcript_usage',
     });
   });

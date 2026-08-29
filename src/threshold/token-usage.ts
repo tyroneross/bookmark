@@ -1,6 +1,5 @@
 import { closeSync, existsSync, fstatSync, openSync, readSync } from 'node:fs';
 
-const DEFAULT_CONTEXT_LIMIT_TOKENS = 200_000;
 const MAX_TAIL_BYTES = 4 * 1024 * 1024;
 // Source for model context limits:
 // https://platform.claude.com/docs/en/build-with-claude/context-windows
@@ -13,6 +12,7 @@ interface RawUsage {
 }
 
 export interface ContextUsage {
+  status: 'measured';
   model: string;
   usedTokens: number;
   contextLimitTokens: number;
@@ -21,16 +21,25 @@ export interface ContextUsage {
   source: 'transcript_usage';
 }
 
+export interface UnknownContextLimitUsage {
+  status: 'unknown_context_limit';
+  model: string;
+  usedTokens: number;
+  source: 'transcript_usage';
+}
+
+export type ContextUsageObservation = ContextUsage | UnknownContextLimitUsage;
+
 /**
  * Resolve the context limit for models observed in Claude Code transcripts.
  * An explicit override wins so users can handle provider/model changes without
- * waiting for a Bookmark release. Unknown models use the conservative 200K
- * baseline rather than silently disabling protection.
+ * waiting for a Bookmark release. Unknown models return null so Bookmark can
+ * ask for a verified limit instead of guessing.
  */
-export function resolveContextLimit(model: string, override?: number): number {
+export function resolveContextLimit(model: string, override?: number): number | null {
   if (override && Number.isFinite(override) && override > 0) return override;
 
-  const normalized = model.toLowerCase();
+  const normalized = normalizeModelId(model);
   const hasOneMillionContext = [
     /^claude-(?:opus|sonnet|fable|mythos)-5(?:-|$)/,
     /^claude-opus-4-(?:6|7|8)(?:-|$)/,
@@ -38,7 +47,13 @@ export function resolveContextLimit(model: string, override?: number): number {
     /^claude-mythos-preview(?:-|$)/,
   ].some(pattern => pattern.test(normalized));
 
-  return hasOneMillionContext ? 1_000_000 : DEFAULT_CONTEXT_LIMIT_TOKENS;
+  if (hasOneMillionContext) return 1_000_000;
+
+  const hasTwoHundredThousandContext = [
+    /^claude-(?:opus|sonnet|haiku)-4-5(?:-|$)/,
+  ].some(pattern => pattern.test(normalized));
+
+  return hasTwoHundredThousandContext ? 200_000 : null;
 }
 
 /** Read only the transcript tail and return the latest assistant usage record. */
@@ -46,7 +61,7 @@ export function readLatestContextUsage(
   transcriptPath: string,
   contextLimitOverride?: number,
   pendingPrompt = ''
-): ContextUsage | null {
+): ContextUsageObservation | null {
   if (!existsSync(transcriptPath)) return null;
 
   let fd: number | undefined;
@@ -90,8 +105,18 @@ export function readLatestContextUsage(
         if (usedTokens <= 0) continue;
 
         const contextLimitTokens = resolveContextLimit(model, contextLimitOverride);
+        if (contextLimitTokens === null) {
+          return {
+            status: 'unknown_context_limit',
+            model,
+            usedTokens,
+            source: 'transcript_usage',
+          };
+        }
+
         const usedFraction = Math.min(usedTokens / contextLimitTokens, 1);
         return {
+          status: 'measured',
           model,
           usedTokens,
           contextLimitTokens,
@@ -136,6 +161,14 @@ export function handledThresholdsForUsage(
 
 function tokenCount(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function normalizeModelId(model: string): string {
+  return model
+    .toLowerCase()
+    .replace(/^anthropic\./, '')
+    .replace(/-v\d+:\d+$/, '')
+    .replace(/@(\d{8})$/, '-$1');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

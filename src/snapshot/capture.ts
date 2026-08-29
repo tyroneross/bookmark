@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { parseTranscript } from '../transcript/parser.js';
 import { extractFilesAndTools } from '../transcript/extractor.js';
-import { storeSnapshot, writeLatestMd, loadLatestSnapshot, getSnapshotsDir } from './storage.js';
+import { storeSnapshot, writeLatestMd, loadLatestSnapshot, getSnapshotsDir, generateSnapshotId } from './storage.js';
 import { compressToMarkdown } from './compress.js';
 import { writeTrails } from '../trails/writer.js';
 import { loadState, saveState, updateSnapshotTime, incrementSnapshotCount } from '../threshold/state.js';
@@ -88,12 +88,4 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
   saveState(storagePath, finalState);
 
   return snapshot;
-}
-
-function generateSnapshotId(): string {
-  const now = new Date();
-  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
-  const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
-  const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  return `SNAP_${date}_${time}`;
 }
