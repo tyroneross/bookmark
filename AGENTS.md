@@ -40,7 +40,11 @@ src/
 ├── setup/           # auto-setup.js runs on postinstall
 ├── snapshot/        # Capture, compress, and storage for snapshots
 ├── threshold/
-│   └── state.ts     # Adaptive threshold and compaction count state
+│   ├── state.ts     # Session, compaction, and threshold notification state
+│   ├── time-based.ts
+│   └── token-usage.ts # Model-aware transcript usage measurement
+├── context/
+│   └── handoff-prompt.ts # Compact semantic handoff contract
 ├── trails/          # File change tracking
 ├── transcript/      # Transcript parsing
 └── types.ts         # Shared TypeScript types
@@ -63,12 +67,12 @@ Defined in `hooks/hooks.json`. All are `command` type, invoking the CLI via `npx
 
 | Hook | Subcommand | Behavior |
 |------|-----------|---------|
-| `Stop` | `stop` | Blocks exit once if `.bookmark/bookmark.context.md` is stale (< 2 min); always approves on retry |
-| `PreCompact` | `precompact` | Captures files, emits a `systemMessage` asking Claude to update `bookmark.context.md` |
+| `Stop` | `stop` | Blocks exit once unless the handoff is under 2 minutes old and contains identity plus all required sections; always approves on retry |
+| `PreCompact` | `precompact` | Captures a mechanical file/tool checkpoint; Claude Code discards PreCompact messages |
 | `SessionStart` | `restore` | Reads `.bookmark/bookmark.context.md` and injects it as restored context |
-| `UserPromptSubmit` | `check` | Async, silent — periodic file change tracking from the transcript |
+| `UserPromptSubmit` | `context-check` | Measures context usage, handles interval capture, and alerts once at each configured token threshold |
 
-To change hook behavior, edit `hooks/hooks.json`. Timeouts are in milliseconds (Stop: 10000, PreCompact: 10000, SessionStart: 5000, UserPromptSubmit: 3000 async).
+To change hook behavior, edit `hooks/hooks.json`. Timeouts are in milliseconds (Stop: 10000, PreCompact: 10000, SessionStart: 5000, UserPromptSubmit: 10000).
 
 ## Commands (7 slash commands)
 
@@ -204,11 +208,11 @@ All runtime data lives in `.bookmark/` within the project directory. Never write
 
 Tiered access pattern: load `LATEST.md` and `bookmark.context.md` always, use `index.json` for lookup, read individual `SNAP_*.json` files only when full detail is needed.
 
-## Adaptive Thresholds
+## Token Thresholds
 
-`src/threshold/state.ts` tracks compaction count per session. As compactions accumulate, `current_threshold` tightens (snapshot triggers earlier) and `snapshot_interval_minutes` decreases. This means: the more compactions a session has seen, the more aggressively Bookmark captures context. On session reset, compaction count returns to 0 and thresholds reset.
+`src/threshold/token-usage.ts` reads the latest model ID and usage record from the transcript tail. Input, cache-read, cache-write, output, and pending-prompt tokens count toward the context window. The default new-session threshold is 75% used. `src/threshold/state.ts` records which thresholds fired; a new session clears them immediately, while compaction re-arms them after a lower post-compaction usage record appears. This suppresses alerts from a stale pre-compaction record.
 
-Default initial state: `current_threshold: 0.20`, `snapshot_interval_minutes: 20`.
+Default state: `tokenThresholds: [0.75]`, `snapshot_interval_minutes: 5`. Unknown models use a conservative 200K context limit; `BOOKMARK_CONTEXT_LIMIT` or project config can override it.
 
 ## Change Guide
 
@@ -219,7 +223,7 @@ Default initial state: `current_threshold: 0.20`, `snapshot_interval_minutes: 20
 | Skill trigger phrases or workflow | `skills/context-continuity/SKILL.md` |
 | MCP tool definitions or handlers | `src/mcp/tools.ts`, then `npm run build` |
 | Storage format | Update both read paths (`src/snapshot/storage.ts`, `src/restore/`) and write paths (`src/snapshot/capture.ts`) together |
-| Adaptive threshold logic | `src/threshold/state.ts` |
+| Token threshold/model-limit logic | `src/threshold/token-usage.ts`, `src/threshold/state.ts` |
 | Plugin metadata | `.claude-plugin/plugin.json` |
 
 Always rebuild (`npm run build`) after editing any `src/` file.

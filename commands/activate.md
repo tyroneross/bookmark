@@ -3,19 +3,20 @@ description: "Activate Bookmark context snapshots for this project"
 allowed-tools: Bash
 ---
 
-Activate Bookmark (context snapshots) for the current project. This configures hooks, creates storage directories, and sets up automatic context capture at a 10-minute snapshot interval.
+Activate Bookmark for the current project. This configures hooks, creates storage directories, captures mechanical checkpoints every five minutes, and recommends a new session after a 75%-used context checkpoint.
 
-Run the setup command, then override the interval to 10 minutes:
+Run the setup command with current defaults:
 
 ```bash
-npx @tyroneross/bookmark setup --defaults && npx @tyroneross/bookmark config --interval 10
+npx @tyroneross/bookmark setup --defaults
 ```
 
-The two-step sequence exists because `setup --defaults` ships with a 20-minute interval to match the broader bookmark CLI's conservative default. `/bookmark:activate` is opinionated — slash-command users expect more frequent capture, so we immediately override to 10 minutes once setup has written the initial state file.
+`setup --defaults` configures the five-minute mechanical interval and the 75%-used new-session threshold.
 
 After activation, confirm to the user:
 - Bookmark is now active for this project
-- Snapshots will be captured automatically before compaction, on **10-minute intervals**, and at session end
+- Mechanical snapshots run before compaction, every **five minutes**, at 75% context used, and at session end
+- At 75%, Claude refreshes the compact semantic handoff and tells the user how to start a clean session
 - Context will be restored automatically when starting a new session
 - Available commands: `/bookmark:snapshot`, `/bookmark:status`, `/bookmark:list`, `/bookmark:restore`
 - To change the interval later: `npx @tyroneross/bookmark config --interval <minutes>`

@@ -13,6 +13,13 @@ import { readContextMd } from '../trails/reader.js';
 import { restoreContext } from '../restore/index.js';
 import { loadState, saveState } from '../threshold/state.js';
 import { checkTimeInterval } from '../threshold/time-based.js';
+import {
+  handledThresholdsForUsage,
+  newlyCrossedThresholds,
+  readLatestContextUsage,
+} from '../threshold/token-usage.js';
+import { buildHandoffPrompt } from '../context/handoff-prompt.js';
+import { isContextMdFresh } from '../context/freshness.js';
 import { loadConfig, getStoragePath, writeConfig } from '../config.js';
 import { configureHooks } from '../setup/configure-hooks.js';
 import { ensureProjectBootstrapped, setupProject } from '../setup/auto-setup.js';
@@ -32,7 +39,7 @@ program
 program
   .command('snapshot')
   .description('Capture a context snapshot')
-  .option('--trigger <type>', 'Trigger type: pre_compact|time_interval|manual|session_end', 'manual')
+  .option('--trigger <type>', 'Trigger type: pre_compact|token_threshold|time_interval|manual|session_end', 'manual')
   .option('--transcript <path>', 'Path to transcript JSONL')
   .option('--session-id <id>', 'Session ID')
   .option('--cwd <path>', 'Working directory')
@@ -104,7 +111,7 @@ program
 
 program
   .command('check')
-  .description('Check time/threshold intervals (for UserPromptSubmit hook)')
+  .description('Check the time interval (async UserPromptSubmit hook)')
   .option('--transcript <path>', 'Path to transcript JSONL')
   .option('--cwd <path>', 'Working directory')
   .action(async (opts) => {
@@ -120,7 +127,8 @@ program
       let shouldCapture = false;
       let reason = '';
 
-      // Check time interval only — token estimation removed (can't know actual context usage)
+      // Legacy interval-only command. Installed hooks use context-check so
+      // interval capture and measured token usage share one state writer.
       const timeCheck = checkTimeInterval(state);
       if (timeCheck.shouldSnapshot) {
         shouldCapture = true;
@@ -147,27 +155,153 @@ program
   });
 
 program
+  .command('context-check')
+  .description('Capture and notify when context usage crosses a token threshold')
+  .option('--transcript <path>', 'Path to transcript JSONL')
+  .option('--cwd <path>', 'Working directory')
+  .action(async (opts) => {
+    try {
+      const hookInput = await readHookInput();
+      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      ensureProjectBootstrapped(cwd);
+      const transcriptPath = opts.transcript ?? hookInput?.transcript_path;
+      if (!transcriptPath) {
+        console.log(JSON.stringify({}));
+        return;
+      }
+
+      const config = loadConfig(cwd);
+      const storagePath = getStoragePath(cwd, config);
+      const state = loadState(storagePath);
+      const timeCheck = checkTimeInterval(state);
+      const usage = readLatestContextUsage(
+        transcriptPath,
+        config.contextLimitTokens,
+        hookInput?.prompt
+      );
+
+      if (!usage) {
+        if (timeCheck.shouldSnapshot) {
+          await captureSnapshot({
+            trigger: 'time_interval',
+            transcriptPath,
+            cwd,
+            sessionId: hookInput?.session_id,
+          });
+        }
+        console.log(JSON.stringify({}));
+        return;
+      }
+
+      const observedState = {
+        ...state,
+        last_event_time: Date.now(),
+        latest_model: usage.model,
+        latest_context_tokens: usage.usedTokens,
+        latest_context_limit_tokens: usage.contextLimitTokens,
+        latest_context_used_pct: usage.usedFraction,
+        latest_context_observed_at: Date.now(),
+      };
+      const handledThresholds = handledThresholdsForUsage(
+        usage.usedFraction,
+        config.tokenThresholds,
+        state.token_thresholds_triggered
+      );
+      observedState.token_thresholds_triggered = handledThresholds;
+      const crossed = newlyCrossedThresholds(
+        usage.usedFraction,
+        config.tokenThresholds,
+        handledThresholds
+      );
+
+      if (crossed.length === 0) {
+        if (timeCheck.shouldSnapshot) {
+          await captureSnapshot({
+            trigger: 'time_interval',
+            transcriptPath,
+            cwd,
+            sessionId: hookInput?.session_id,
+          });
+          const refreshedState = loadState(storagePath);
+          saveState(storagePath, {
+            ...refreshedState,
+            last_event_time: observedState.last_event_time,
+            latest_model: observedState.latest_model,
+            latest_context_tokens: observedState.latest_context_tokens,
+            latest_context_limit_tokens: observedState.latest_context_limit_tokens,
+            latest_context_used_pct: observedState.latest_context_used_pct,
+            latest_context_observed_at: observedState.latest_context_observed_at,
+            token_thresholds_triggered: observedState.token_thresholds_triggered,
+          });
+        } else {
+          saveState(storagePath, observedState);
+        }
+        console.log(JSON.stringify({}));
+        return;
+      }
+
+      const snapshot = await captureSnapshot({
+        trigger: 'token_threshold',
+        transcriptPath,
+        cwd,
+        sessionId: hookInput?.session_id,
+        contextUsage: usage,
+      });
+
+      const refreshedState = loadState(storagePath);
+      saveState(storagePath, {
+        ...refreshedState,
+        latest_model: usage.model,
+        latest_context_tokens: usage.usedTokens,
+        latest_context_limit_tokens: usage.contextLimitTokens,
+        latest_context_used_pct: usage.usedFraction,
+        latest_context_observed_at: Date.now(),
+        token_thresholds_triggered: [
+          ...new Set([...(handledThresholds ?? []), ...crossed]),
+        ],
+      });
+
+      const threshold = crossed[crossed.length - 1];
+      const thresholdPct = Math.round(threshold * 100);
+      const usedPct = Math.round(usage.usedFraction * 100);
+      const reason = `Context usage crossed ${thresholdPct}% (${usedPct}% observed; snapshot ${snapshot.snapshot_id}).`;
+      const handoffPrompt = buildHandoffPrompt({ cwd, reason });
+
+      console.log(JSON.stringify({
+        systemMessage:
+          `Bookmark captured ${snapshot.snapshot_id} at ${usedPct}% of the ${usage.model} context window. ` +
+          'Bookmark asked Claude to update the handoff. Start a new session after this response to restore it.',
+        hookSpecificOutput: {
+          hookEventName: 'UserPromptSubmit',
+          additionalContext:
+            `${handoffPrompt}\nAfter successfully writing it, tell the user to start a new Claude session with /clear or by exiting and reopening Claude Code.`,
+        },
+      }));
+    } catch {
+      // Context protection must never block the user's prompt.
+      console.log(JSON.stringify({}));
+    }
+  });
+
+program
   .command('stop')
   .description('Stop hook — capture files, conditionally block for bookmark.context.md (for Stop hook)')
   .option('--cwd <path>', 'Working directory')
   .action(async (opts) => {
     try {
-      // Skip stdin reading — Claude Code command hooks don't pipe stdin.
-      // readHookInput() waits 1s for data that never arrives, then the
-      // JSON validation fails in Claude Code's hook validator.
-      // All data is discovered independently via cwd, env vars, and path discovery.
-      const cwd = opts.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+      const hookInput = await readHookInput();
+      const cwd = opts.cwd ?? hookInput?.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
       ensureProjectBootstrapped(cwd);
 
       // Always capture file tracking snapshot
-      const transcriptPath = discoverTranscriptPath(cwd);
+      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(cwd);
       if (transcriptPath) {
         try {
           await captureSnapshot({
             trigger: 'session_end',
             transcriptPath,
             cwd,
-            sessionId: process.env.CLAUDE_SESSION_ID,
+            sessionId: hookInput?.session_id ?? process.env.CLAUDE_SESSION_ID,
           });
         } catch { /* file tracking is best-effort */ }
       }
@@ -196,7 +330,7 @@ program
       // First time — write JSON marker, track the block, and block
       const marker = JSON.stringify({
         timestamp: Date.now(),
-        session_id: process.env.CLAUDE_SESSION_ID ?? 'unknown',
+        session_id: hookInput?.session_id ?? process.env.CLAUDE_SESSION_ID ?? 'unknown',
       });
       writeFileSync(markerPath, marker, 'utf-8');
       try {
@@ -204,10 +338,14 @@ program
         st.quality_blocks = (st.quality_blocks ?? 0) + 1;
         saveState(storagePath, st);
       } catch { /* tracking is best-effort */ }
+      const handoffPrompt = buildHandoffPrompt({
+        cwd,
+        reason: 'The session is stopping and needs a durable handoff.',
+      });
       console.log(JSON.stringify({
         decision: 'block',
-        reason: 'Write session summary to .bookmark/bookmark.context.md before stopping.',
-        systemMessage: 'Before this session ends, write a brief session summary to .bookmark/bookmark.context.md using the Write tool. Include:\n- Current task (what the user asked for)\n- Progress (what\'s done, what\'s remaining)\n- Key decisions made and rationale\n- Active git branch if applicable\n- Files modified (top 5-10 by importance)\n- Any blockers or open questions\n\nKeep it under 30 lines. Overwrite any existing bookmark.context.md with the current state. Write it now, then stop.',
+        reason: handoffPrompt,
+        systemMessage: 'Bookmark needs Claude to refresh the session handoff before stopping.',
       }));
     } catch (err) {
       // Log error for debugging, then approve to never block stop
@@ -223,51 +361,30 @@ program
 
 program
   .command('precompact')
-  .description('PreCompact hook — capture files, request bookmark.context.md via systemMessage')
+  .description('PreCompact hook — capture a mechanical checkpoint')
   .option('--cwd <path>', 'Working directory')
   .action(async (opts) => {
     try {
-      // Skip stdin reading — Claude Code command hooks don't pipe stdin.
-      const cwd = opts.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+      const hookInput = await readHookInput();
+      const cwd = opts.cwd ?? hookInput?.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
       ensureProjectBootstrapped(cwd);
 
       // Always capture file tracking snapshot
-      const transcriptPath = discoverTranscriptPath(cwd);
+      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(cwd);
       if (transcriptPath) {
         try {
           await captureSnapshot({
             trigger: 'pre_compact',
             transcriptPath,
             cwd,
-            sessionId: process.env.CLAUDE_SESSION_ID,
+            sessionId: hookInput?.session_id ?? process.env.CLAUDE_SESSION_ID,
           });
         } catch { /* file tracking is best-effort */ }
       }
 
-      // Non-blocking — always approve, politely ask Claude to write bookmark.context.md
-      // Uses 5-min staleness window (more lenient than Stop's 2 min since work is ongoing)
-      const config = loadConfig(cwd);
-      const storagePath = getStoragePath(cwd, config);
-      const contextPath = join(storagePath, 'bookmark.context.md');
-
-      let needsUpdate = true;
-      if (existsSync(contextPath)) {
-        try {
-          const mtime = statSync(contextPath).mtimeMs;
-          const fiveMinAgo = Date.now() - 5 * 60 * 1000;
-          if (mtime > fiveMinAgo) {
-            needsUpdate = false;
-          }
-        } catch { /* assume needs update */ }
-      }
-
-      if (needsUpdate) {
-        console.log(JSON.stringify({
-          systemMessage: 'Context compacting. Write session summary to .bookmark/bookmark.context.md with: task, progress, decisions, branch, files. Keep under 30 lines.',
-        }));
-      } else {
-        console.log(JSON.stringify({}));
-      }
+      // Claude Code discards PreCompact systemMessage output. The synchronous
+      // 75% UserPromptSubmit hook is the semantic-handoff activation path.
+      console.log(JSON.stringify({}));
     } catch {
       // Never block compaction
       console.log(JSON.stringify({}));
@@ -294,6 +411,15 @@ program
     console.log(`  Snapshots:          ${count}`);
     console.log(`  Compaction cycles:  ${state.compaction_count}`);
     console.log(`  Snapshot interval:  ${state.snapshot_interval_minutes} minutes`);
+    console.log(`  New-session alert:  ${config.tokenThresholds.map(t => `${Math.round(t * 100)}%`).join(', ')} used`);
+
+    if (state.latest_context_used_pct !== undefined) {
+      const usedPct = Math.round(state.latest_context_used_pct * 100);
+      const usedTokens = state.latest_context_tokens ?? 0;
+      const limitTokens = state.latest_context_limit_tokens ?? 0;
+      console.log(`  Context usage:      ${usedPct}% (${formatTokenCount(usedTokens)} / ${formatTokenCount(limitTokens)})`);
+      if (state.latest_model) console.log(`  Active model:       ${state.latest_model}`);
+    }
 
     if (state.last_snapshot_time > 0) {
       const ago = Math.round((Date.now() - state.last_snapshot_time) / 60_000);
@@ -554,17 +680,64 @@ program
   .command('config')
   .description('Show or set configuration')
   .option('--interval <minutes>', 'Set time-based interval')
+  .option('--token-threshold <fraction>', 'Set context-used threshold (0.75 or 75)')
+  .option('--context-limit <tokens>', 'Override model context limit')
   .option('--cwd <path>', 'Working directory')
   .action((opts) => {
     const cwd = opts.cwd ?? process.cwd();
     const config = loadConfig(cwd);
     const storagePath = getStoragePath(cwd, config);
 
-    if (opts.interval) {
-      const state = loadState(storagePath);
-      state.snapshot_interval_minutes = parseInt(opts.interval, 10);
-      saveState(storagePath, state);
-      console.log(`Snapshot interval set to ${opts.interval} minutes`);
+    if (opts.interval || opts.tokenThreshold || opts.contextLimit) {
+      const preferences: Parameters<typeof writeConfig>[1] = {};
+
+      if (opts.interval) {
+        const interval = Number.parseInt(opts.interval, 10);
+        if (!Number.isFinite(interval) || interval <= 0) {
+          console.error('Interval must be a positive number of minutes.');
+          process.exitCode = 1;
+          return;
+        }
+        preferences.intervalMinutes = interval;
+      }
+
+      if (opts.tokenThreshold) {
+        const threshold = normalizeThreshold(Number(opts.tokenThreshold));
+        if (threshold === null) {
+          console.error('Token threshold must be between 0 and 1, or between 1 and 100 percent.');
+          process.exitCode = 1;
+          return;
+        }
+        preferences.tokenThresholds = [threshold];
+      }
+
+      if (opts.contextLimit) {
+        const limit = Number.parseInt(opts.contextLimit, 10);
+        if (!Number.isFinite(limit) || limit <= 0) {
+          console.error('Context limit must be a positive token count.');
+          process.exitCode = 1;
+          return;
+        }
+        preferences.contextLimitTokens = limit;
+      }
+
+      writeConfig(cwd, preferences);
+
+      if (preferences.intervalMinutes !== undefined) {
+        const state = loadState(storagePath);
+        state.snapshot_interval_minutes = preferences.intervalMinutes;
+        saveState(storagePath, state);
+      }
+
+      if (preferences.intervalMinutes !== undefined) {
+        console.log(`Snapshot interval set to ${preferences.intervalMinutes} minutes`);
+      }
+      if (preferences.tokenThresholds) {
+        console.log(`Token threshold set to ${Math.round(preferences.tokenThresholds[0] * 100)}% used`);
+      }
+      if (preferences.contextLimitTokens) {
+        console.log(`Context limit set to ${preferences.contextLimitTokens} tokens`);
+      }
       return;
     }
 
@@ -573,12 +746,14 @@ program
     console.log('══════════════════════');
     console.log(`  Storage path:       ${config.storagePath}`);
     console.log(`  Interval:           ${config.intervalMinutes} minutes`);
-    console.log(`  Thresholds:         ${config.thresholds.map(t => `${Math.round(t * 100)}%`).join(', ')}`);
+    console.log(`  Token thresholds:   ${config.tokenThresholds.map(t => `${Math.round(t * 100)}% used`).join(', ')}`);
+    console.log(`  Context limit:      ${config.contextLimitTokens ? formatTokenCount(config.contextLimitTokens) : 'model-aware'}`);
     console.log(`  Max snapshots:      ${config.maxActiveSnapshots}`);
     console.log(`  Archive after:      ${config.archiveAfterDays} days`);
     console.log('');
     console.log('Environment overrides:');
-    console.log('  BOOKMARK_INTERVAL, BOOKMARK_THRESHOLD, BOOKMARK_STORAGE_PATH');
+    console.log('  BOOKMARK_INTERVAL, BOOKMARK_TOKEN_THRESHOLD, BOOKMARK_CONTEXT_LIMIT');
+    console.log('  BOOKMARK_STORAGE_PATH');
     console.log('  BOOKMARK_VERBOSE');
     console.log('');
   });
@@ -675,28 +850,16 @@ function updateHomePointer(cwd: string): void {
   }
 }
 
-/**
- * Quality gate for bookmark.context.md — checks that the file has real content,
- * not just old boilerplate. Prevents approving stale/empty summaries.
- */
-function isContextMdFresh(contextPath: string, markerPath: string): boolean {
-  if (!existsSync(contextPath)) return false;
-  try {
-    const stat = statSync(contextPath);
-    // Must be >200 bytes (boilerplate template is ~180 bytes)
-    if (stat.size < 200) return false;
-    // Must be newer than .stop-requested marker (if marker exists)
-    if (existsSync(markerPath)) {
-      const markerTime = statSync(markerPath).mtimeMs;
-      if (stat.mtimeMs <= markerTime) return false;
-    }
-    // Content must not be boilerplate — real summaries have markdown headers
-    const content = readFileSync(contextPath, 'utf-8');
-    if (content.startsWith('[Bookmark Context') && !content.includes('## ')) return false;
-    return true;
-  } catch {
-    return false;
-  }
+function formatTokenCount(value: number): string {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(value % 1_000_000 === 0 ? 0 : 1)}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return String(value);
+}
+
+function normalizeThreshold(value: number): number | null {
+  if (!Number.isFinite(value) || value <= 0) return null;
+  const normalized = value > 1 ? value / 100 : value;
+  return normalized > 0 && normalized < 1 ? normalized : null;
 }
 
 const GREEN = '\x1b[32m';
@@ -823,6 +986,7 @@ async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
   console.log('');
   console.log('Defaults:');
   console.log(`  Interval:     ${intervalMinutes} minutes`);
+  console.log('  New session:  suggest at 75% context used');
   console.log('');
   console.log(`${GREEN}Ready.${RESET} Start a Claude Code session — snapshots will be captured automatically.`);
   console.log('');

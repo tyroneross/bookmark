@@ -52,6 +52,10 @@ export function incrementCompaction(state: BookmarkState, thresholds: number[]):
     ...state,
     compaction_count: newCount,
     current_threshold: thresholds[thresholdIndex],
+    // The first prompt after compaction can still see the final pre-compaction
+    // usage record. Keep handled thresholds until a lower usage record proves
+    // the new context cycle is active.
+    token_thresholds_triggered: state.token_thresholds_triggered,
   };
 }
 
@@ -79,6 +83,12 @@ export function resetForNewSession(state: BookmarkState, sessionId: string, thre
     current_threshold: thresholds[0],
     last_event_time: Date.now(),
     session_history: history,
+    token_thresholds_triggered: [],
+    latest_model: undefined,
+    latest_context_tokens: undefined,
+    latest_context_limit_tokens: undefined,
+    latest_context_used_pct: undefined,
+    latest_context_observed_at: undefined,
   };
 }
 

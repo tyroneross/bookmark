@@ -14,10 +14,14 @@ export interface Snapshot {
   files_changed: FileActivity[];
   tools_summary: Record<string, number>;
 
-  // Dead fields — kept optional for backward compat with existing snapshots
-  // Claude writes these via prompt hooks now, not extracted from transcripts
+  // Model-reported context metadata for token-threshold snapshots.
   context_remaining_pct?: number;
+  context_used_pct?: number;
   token_estimate?: number;
+  context_limit_tokens?: number;
+  model?: string;
+
+  // Legacy semantic fields kept optional for backward compatibility.
   intent?: string;
   progress?: string;
   current_status?: string;
@@ -31,7 +35,7 @@ export interface Snapshot {
   prior_snapshot_id?: string;
 }
 
-export type SnapshotTrigger = 'pre_compact' | 'time_interval' | 'manual' | 'session_end';
+export type SnapshotTrigger = 'pre_compact' | 'token_threshold' | 'time_interval' | 'manual' | 'session_end';
 
 export interface Decision {
   description: string;
@@ -108,6 +112,16 @@ export interface BookmarkState {
   tokens_injected?: number;
   quality_blocks?: number;
   boilerplate_caught?: number;
+
+  // Latest model-reported context observation.
+  latest_model?: string;
+  latest_context_tokens?: number;
+  latest_context_limit_tokens?: number;
+  latest_context_used_pct?: number;
+  latest_context_observed_at?: number;
+
+  // Thresholds already handled in the current session/compaction cycle.
+  token_thresholds_triggered?: number[];
 }
 
 export interface SessionEntry {
@@ -150,6 +164,7 @@ export interface HookInput {
   trigger?: 'manual' | 'auto';
   source?: 'startup' | 'resume' | 'compact' | 'clear';
   custom_instructions?: string;
+  prompt?: string;
 }
 
 export interface HookOutput {
@@ -173,12 +188,16 @@ export interface BookmarkConfig {
   snapshotOnSessionEnd: boolean;
   restoreOnSessionStart: boolean;
 
+  tokenThresholds: number[];
+  contextLimitTokens?: number;
+
   verboseLogging: boolean;
 }
 
 // ─── Setup Types ───
 
 export interface SetupPreferences {
-  intervalMinutes: number;
-
+  intervalMinutes?: number;
+  tokenThresholds?: number[];
+  contextLimitTokens?: number;
 }

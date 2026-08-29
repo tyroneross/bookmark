@@ -21,32 +21,29 @@ This creates a painful pattern: every new session starts with you re-explaining 
 
 ## How Bookmark Works
 
-**Install it. Forget about it. It just works.**
-
-Bookmark runs as an external process — zero tokens consumed from your context window. Four hooks handle everything automatically:
+Bookmark runs as a small external process. Four hooks keep a durable handoff current:
 
 | Hook | When | What |
 |------|------|------|
-| **PreCompact** | Before context compaction | Captures full context before it's compressed |
+| **PreCompact** | Before context compaction | Captures a mechanical file/tool checkpoint |
 | **SessionStart** | New session begins | Restores prior context so Claude knows what you were doing |
-| **UserPromptSubmit** | Every user message | Checks if a time-based snapshot is due |
-| **Stop** | Session ends | Final snapshot preserving everything |
+| **UserPromptSubmit** | Every user message | Checks time and token thresholds; alerts at 75% used |
+| **Stop** | Session ends | Captures files and requires a fresh semantic handoff |
 
 When you open a new terminal and run `claude`, Bookmark restores your prior context. Claude greets you knowing what you were working on, what decisions were made, and what's left to do.
 
 ## What Gets Captured
 
-Each snapshot extracts from the conversation transcript — no LLM calls needed:
+Bookmark separates reliable mechanical evidence from semantic judgment:
 
-- **Decisions made** — "chose Postgres over SQLite because...", "going with React Query for..."
-- **Current status** — what was being worked on when the session ended
-- **Open items** — TODOs, next steps, unfinished work
-- **Unknowns and blockers** — things that were unclear or blocking progress
-- **Files changed** — which files were created, edited, or read
-- **Errors encountered** — what broke and whether it was resolved
-- **Tool usage** — aggregate counts of Read, Edit, Bash, etc.
+- **`bookmark.context.md`** — Claude writes the current task, status, remaining work,
+  decisions, risks, open questions, sources of truth, and next steps.
+- **JSON snapshots and `LATEST.md`** — Bookmark extracts file changes, tool counts,
+  capture reason, model, and measured context usage from the transcript.
 
-All extraction uses pattern matching on the transcript. Zero API calls, zero cost, zero latency.
+The per-prompt threshold check makes no API call and reads only the transcript tail. Full
+transcript parsing runs only when an interval or threshold capture is due. The semantic handoff
+is capped at 800 tokens and points to source files instead of copying them.
 
 ### File paths in snapshots are now project-relative
 
@@ -105,25 +102,32 @@ bookmark show --latest       # Show latest snapshot content
 bookmark show SNAP_ID        # Show specific snapshot
 bookmark config              # Show current configuration
 bookmark config --interval 15  # Change snapshot interval to 15 minutes
+bookmark config --token-threshold 75  # Capture and alert at 75% used
+bookmark config --context-limit 500000  # Override model context limit
 bookmark setup               # Interactive configuration
 ```
 
-## Adaptive Thresholds
+## Token Threshold Capture
 
-Bookmark gets smarter the more your context compacts. It tracks compaction cycles and adjusts when snapshots trigger:
+Bookmark reads the latest model-reported usage from the Claude Code transcript. It counts input,
+cache-read, cache-write, output, and the pending prompt against the active model's context limit.
+At 75% used, Bookmark captures a `token_threshold` snapshot, shows a warning, asks Claude to
+refresh `bookmark.context.md`, and recommends a new session. It alerts once until a new session
+or lower post-compaction usage re-arms the threshold.
 
-| Compaction count | Snapshot triggers at | Behavior |
-|-----------------|---------------------|----------|
-| 0 (never compacted) | 20% context remaining | Conservative — only near compaction |
-| 1 (once) | 30% remaining | Earlier snapshots |
-| 2 (twice) | 40% remaining | Even earlier |
-| 3+ (frequent) | 50% remaining | Aggressive — snapshot at halfway |
+Current 1M-context Claude families are resolved by model ID. Other models use a conservative
+200K fallback. The mapping follows Anthropic's
+[context-window documentation](https://platform.claude.com/docs/en/build-with-claude/context-windows).
+Override either value when needed:
 
-Sessions that compact frequently get protected more aggressively. Sessions that never compact barely notice Bookmark is there.
+```bash
+bookmark config --token-threshold 75
+bookmark config --context-limit 500000
+```
 
 ## Time-Based Snapshots
 
-Default: every **20 minutes** of active session time. Configurable:
+Default: every **5 minutes** of active session time. Configurable:
 
 ```bash
 bookmark config --interval 10   # Every 10 minutes
@@ -131,16 +135,6 @@ bookmark config --interval 30   # Every 30 minutes
 ```
 
 Or set via environment: `BOOKMARK_INTERVAL=15`
-
-## Smart Mode (Optional)
-
-For higher-quality extraction, pass `--smart` to use Claude Haiku (~$0.001 per snapshot):
-
-```bash
-bookmark config --smart-default   # Enable by default
-```
-
-Requires `ANTHROPIC_API_KEY`. Falls back to pattern matching if unavailable.
 
 ## Storage
 
@@ -217,13 +211,10 @@ restored content is replaced with a message telling you to pick a specific snaps
 `/bookmark:list` or read the file manually if you actually want it. Soft warnings still
 apply between 24h and 72h.
 
-## Zero Context Tax
+## Small Context Footprint
 
-This is the key design principle. Every other approach to "memory" for Claude Code injects tokens into your context window, reducing the space available for actual work.
-
-Bookmark runs as an external CLI process. The hooks invoke `npx @tyroneross/bookmark` — a separate Node process that reads the transcript file directly, extracts patterns, and writes snapshot files. The only context injection is ~500-800 tokens on SessionStart to restore prior session context.
-
-All the heavy lifting happens outside the context window.
+Bookmark performs mechanical capture outside the model context. It injects only the compact
+handoff on SessionStart and one short instruction when a token threshold is crossed.
 
 ## Configuration
 
@@ -231,22 +222,21 @@ All the heavy lifting happens outside the context window.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BOOKMARK_INTERVAL` | `20` | Snapshot interval in minutes |
-| `BOOKMARK_THRESHOLD` | `0.2,0.3,0.4,0.5,0.6` | Adaptive threshold levels |
-| `BOOKMARK_CONTEXT_LIMIT` | `200000` | Context window size in tokens |
-| `BOOKMARK_SMART` | `false` | Enable smart extraction by default |
+| `BOOKMARK_INTERVAL` | `5` | Snapshot interval in minutes |
+| `BOOKMARK_TOKEN_THRESHOLD` | `0.75` | Context-used fraction that captures and alerts |
+| `BOOKMARK_CONTEXT_LIMIT` | model-aware | Explicit context-window override in tokens |
 | `BOOKMARK_STORAGE_PATH` | `.bookmark` | Storage directory |
 | `BOOKMARK_VERBOSE` | `false` | Enable verbose logging |
 | `BOOKMARK_SKIP_SETUP` | `false` | Skip postinstall auto-setup |
 
 ## Requirements
 
-- Node.js >= 15
+- Node.js >= 20
 - Claude Code
 
 ## License
 
-MIT
+Apache-2.0
 
 ## Codex
 
@@ -260,4 +250,3 @@ Primary Codex surface:
 - MCP config from `./.mcp.json` when present
 
 Install the package from this package root using your current Codex plugin install flow. The Codex package is additive only: Claude-specific hooks, slash commands, and agent wiring remain unchanged for Claude Code.
-

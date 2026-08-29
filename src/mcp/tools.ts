@@ -307,7 +307,11 @@ async function handleStatus(): Promise<{
   }
 
   lines.push(`Compaction count: ${state.compaction_count}`);
-  lines.push(`Current threshold: ${Math.round(state.current_threshold * 100)}%`);
+  lines.push(`New-session threshold: ${config.tokenThresholds.map(value => `${Math.round(value * 100)}% used`).join(', ')}`);
+  if (state.latest_context_used_pct !== undefined) {
+    lines.push(`Latest context usage: ${Math.round(state.latest_context_used_pct * 100)}%`);
+    if (state.latest_model) lines.push(`Active model: ${state.latest_model}`);
+  }
   lines.push(
     `Snapshot interval: ${state.snapshot_interval_minutes} minutes`
   );

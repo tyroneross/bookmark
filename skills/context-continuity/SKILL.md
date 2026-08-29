@@ -23,7 +23,7 @@ This skill restores and maintains context across Claude Code sessions and compac
 
 Use the `bookmark status` MCP tool to check if snapshots exist and how fresh they are.
 
-The status tool returns: snapshot count, last capture time, freshness, compaction count, and current threshold.
+The status tool returns: snapshot count, last capture time, freshness, compaction count, configured new-session threshold, and the latest measured model/context usage when available.
 
 ### 2. Restore context
 

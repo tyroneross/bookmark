@@ -16,8 +16,19 @@ const DEFAULTS: BookmarkConfig = {
   archiveAfterDays: 30,
   snapshotOnSessionEnd: true,
   restoreOnSessionStart: true,
+  tokenThresholds: [0.75],
+  contextLimitTokens: undefined,
   verboseLogging: false,
 };
+
+function parseFractions(value: string): number[] {
+  return value
+    .split(',')
+    .map(Number)
+    .map(n => n > 1 ? n / 100 : n)
+    .filter(n => Number.isFinite(n) && n > 0 && n < 1)
+    .sort((a, b) => a - b);
+}
 
 /**
  * Resolve the enclosing project root for a given CWD.
@@ -77,11 +88,32 @@ export function loadConfig(cwd?: string): BookmarkConfig {
     const vals = process.env.BOOKMARK_THRESHOLD.split(',').map(Number).filter(n => !isNaN(n));
     if (vals.length > 0) config.thresholds = vals;
   }
+  if (process.env.BOOKMARK_TOKEN_THRESHOLD) {
+    const vals = parseFractions(process.env.BOOKMARK_TOKEN_THRESHOLD);
+    if (vals.length > 0) config.tokenThresholds = vals;
+  }
+  if (process.env.BOOKMARK_CONTEXT_LIMIT) {
+    const limit = Number.parseInt(process.env.BOOKMARK_CONTEXT_LIMIT, 10);
+    if (Number.isFinite(limit) && limit > 0) config.contextLimitTokens = limit;
+  }
   if (process.env.BOOKMARK_STORAGE_PATH) {
     config.storagePath = process.env.BOOKMARK_STORAGE_PATH;
   }
   if (process.env.BOOKMARK_VERBOSE === 'true') {
     config.verboseLogging = true;
+  }
+
+  const configuredTokenThresholds = Array.isArray(config.tokenThresholds)
+    ? parseFractions(config.tokenThresholds.join(','))
+    : [];
+  config.tokenThresholds = configuredTokenThresholds.length > 0
+    ? configuredTokenThresholds
+    : [...DEFAULTS.tokenThresholds];
+  if (
+    config.contextLimitTokens !== undefined &&
+    (!Number.isFinite(config.contextLimitTokens) || config.contextLimitTokens <= 0)
+  ) {
+    config.contextLimitTokens = undefined;
   }
 
   return config;
@@ -167,7 +199,7 @@ export function migrateLegacyStorage(cwd: string): void {
 }
 
 export function writeConfig(cwd: string, prefs: SetupPreferences): void {
-  const configDir = join(cwd, '.bookmark');
+  const configDir = join(resolveProjectRoot(cwd), '.bookmark');
   if (!existsSync(configDir)) {
     mkdirSync(configDir, { recursive: true });
   }
@@ -182,10 +214,10 @@ export function writeConfig(cwd: string, prefs: SetupPreferences): void {
     }
   }
 
-  const merged = {
-    ...existing,
-    intervalMinutes: prefs.intervalMinutes,
-  };
+  const merged: Record<string, unknown> = { ...existing };
+  if (prefs.intervalMinutes !== undefined) merged.intervalMinutes = prefs.intervalMinutes;
+  if (prefs.tokenThresholds !== undefined) merged.tokenThresholds = prefs.tokenThresholds;
+  if (prefs.contextLimitTokens !== undefined) merged.contextLimitTokens = prefs.contextLimitTokens;
 
   writeFileSync(configPath, JSON.stringify(merged, null, 2), 'utf-8');
 }

@@ -49,9 +49,8 @@ const BOOKMARK_HOOKS: Record<string, SettingsHook> = {
     matcher: '',
     hooks: [{
       type: 'command',
-      command: `npx @tyroneross/bookmark check 2>/dev/null || true`,
-      timeout: 3000,
-      async: true,
+      command: `npx @tyroneross/bookmark context-check 2>/dev/null || echo '{}'`,
+      timeout: 10000,
     }],
   },
 };
@@ -97,8 +96,8 @@ function isBookmarkHook(hookGroup: SettingsHook): boolean {
 
 /**
  * Configure hooks and plugin registration in the project's .claude/settings.json.
- * All hooks are command-type — Stop and PreCompact use CLI commands that
- * output JSON decisions (block/approve) and systemMessages.
+ * All hooks are command-type. One synchronous `context-check` hook handles
+ * interval capture and token alerts through a single state writer.
  */
 export function configureHooks(cwd: string): void {
   const settingsDir = join(cwd, '.claude');

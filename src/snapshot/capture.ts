@@ -8,12 +8,14 @@ import { loadState, saveState, updateSnapshotTime, incrementSnapshotCount } from
 import { loadConfig, getStoragePath } from '../config.js';
 import { appendToRegistry } from '../registry.js';
 import type { Snapshot, SnapshotTrigger } from '../types.js';
+import type { ContextUsage } from '../threshold/token-usage.js';
 
 export interface CaptureOptions {
   trigger: SnapshotTrigger;
   transcriptPath: string;
   cwd: string;
   sessionId?: string;
+  contextUsage?: ContextUsage;
 }
 
 /**
@@ -26,7 +28,8 @@ export interface CaptureOptions {
  *
  * Intent, decisions, and progress are NOT extracted from transcripts —
  * regex can't do semantic extraction reliably. Instead, Claude writes
- * bookmark.context.md directly via prompt-type hooks (Stop, PreCompact).
+ * bookmark.context.md directly after the token hook requests a handoff or the
+ * Stop hook blocks for one.
  * This pipeline provides supplementary file tracking data.
  */
 export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot> {
@@ -38,7 +41,7 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
   const { entries } = parseTranscript(options.transcriptPath);
 
   // 2. Extract file changes + tool usage only (working parts of extractor)
-  // Intent, decisions, progress are NOT extracted — Claude writes those via prompt hooks
+  // Intent, decisions, and progress are NOT extracted — Claude writes the handoff.
   const extraction = extractFilesAndTools(entries, { projectPath: options.cwd });
 
   // 3. Build snapshot
@@ -55,11 +58,19 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
     files_changed: extraction.files_changed,
     tools_summary: extraction.tools_summary,
     prior_snapshot_id: priorSnapshot?.snapshot_id,
+    context_remaining_pct: options.contextUsage?.remainingFraction,
+    context_used_pct: options.contextUsage?.usedFraction,
+    token_estimate: options.contextUsage?.usedTokens,
+    context_limit_tokens: options.contextUsage?.contextLimitTokens,
+    model: options.contextUsage?.model,
   };
 
   // 4. Skip empty snapshots — don't write JSON/index for 0-file non-manual captures
   // This prevents accumulation of empty session_end snapshots
-  const hasContent = snapshot.files_changed.length > 0 || snapshot.trigger === 'manual';
+  const hasContent =
+    snapshot.files_changed.length > 0 ||
+    snapshot.trigger === 'manual' ||
+    snapshot.trigger === 'token_threshold';
 
   if (hasContent) {
     storeSnapshot(storagePath, snapshot);

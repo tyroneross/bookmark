@@ -128,6 +128,8 @@ function updateIndex(storagePath: string, snapshot: Snapshot): void {
     trigger: snapshot.trigger,
     compaction_cycle: snapshot.compaction_cycle,
     files_changed_count: snapshot.files_changed.length,
+    context_remaining_pct: snapshot.context_remaining_pct,
+    token_estimate: snapshot.token_estimate,
   };
 
   // Add to front (most recent first)

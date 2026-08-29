@@ -37,3 +37,11 @@ export { extractFilesAndTools } from './transcript/extractor.js';
 export { loadState, saveState } from './threshold/state.js';
 export { getThreshold, shouldSnapshotByThreshold } from './threshold/adaptive.js';
 export { checkTimeInterval } from './threshold/time-based.js';
+export {
+  handledThresholdsForUsage,
+  readLatestContextUsage,
+  resolveContextLimit,
+  newlyCrossedThresholds,
+} from './threshold/token-usage.js';
+export { buildHandoffPrompt } from './context/handoff-prompt.js';
+export { isContextMdFresh } from './context/freshness.js';

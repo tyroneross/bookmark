@@ -20,13 +20,19 @@ After the snapshot is taken, confirm to the user with:
 - Number of files tracked
 - Number of tools tracked
 
-Then write a brief session summary to `.bookmark/bookmark.context.md` that includes:
-- Current task (what the user asked for)
-- Progress (what's done, what's remaining)
-- Key decisions made and rationale
-- Active git branch if applicable
-- Files modified (top 5-10 by importance)
+Then write the semantic handoff to the absolute path for `.bookmark/bookmark.context.md`.
+Start with `BOOKMARK_IDENTITY` and include these sections:
 
-Keep the bookmark.context.md under 30 lines. This is the primary artifact that restores context on the next session start.
+- `## Current task`
+- `## Status`
+- `## Remaining work`
+- `## Decisions`
+- `## Risks and open questions`
+- `## Sources of truth`
+- `## Next steps`
+
+Separate completed, validated, committed, pushed, and deployed status. Use absolute paths in
+Sources of truth and Next steps. Point to durable files instead of copying long content, state
+unknowns explicitly, and keep the handoff under 800 tokens.
 
 *bookmark — context snapshot*

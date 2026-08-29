@@ -15,6 +15,12 @@ export function compressToMarkdown(snapshot: Snapshot): string {
   lines.push(`> ${snapshot.snapshot_id} | cycle ${snapshot.compaction_cycle} | ${snapshot.trigger}`);
   lines.push('');
 
+  if (snapshot.context_used_pct !== undefined && snapshot.context_limit_tokens) {
+    const usedPct = Math.round(snapshot.context_used_pct * 100);
+    lines.push(`> Context: ${usedPct}% used | ${snapshot.model ?? 'unknown model'} | limit ${formatTokens(snapshot.context_limit_tokens)}`);
+    lines.push('');
+  }
+
   // Files Changed — the core value of this snapshot
   if (snapshot.files_changed.length > 0) {
     const totalLines = snapshot.files_changed.reduce((sum, f) => sum + (f.lines_changed ?? 0), 0);
@@ -45,6 +51,12 @@ export function compressToMarkdown(snapshot: Snapshot): string {
   lines.push('*bookmark — file tracking snapshot*');
 
   return lines.join('\n');
+}
+
+function formatTokens(value: number): string {
+  if (value >= 1_000_000) return `${value / 1_000_000}M`;
+  if (value >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return String(value);
 }
 
 /** Shorten a file path relative to project root */

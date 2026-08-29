@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { resolveProjectRoot, getStoragePath, loadConfig } from './config.js';
+import { resolveProjectRoot, getStoragePath, loadConfig, writeConfig } from './config.js';
 
 describe('resolveProjectRoot', () => {
   let base: string;
@@ -134,5 +134,50 @@ describe('loadConfig', () => {
     const cfg = loadConfig(empty);
     expect(cfg.intervalMinutes).toBe(5);
     expect(cfg.maxActiveSnapshots).toBe(200);
+    expect(cfg.tokenThresholds).toEqual([0.75]);
+    expect(cfg.contextLimitTokens).toBeUndefined();
+  });
+
+  it('accepts percentage token thresholds and an explicit context limit', () => {
+    const empty = join(base, 'empty');
+    mkdirSync(empty);
+    const previousThreshold = process.env.BOOKMARK_TOKEN_THRESHOLD;
+    const previousLimit = process.env.BOOKMARK_CONTEXT_LIMIT;
+    process.env.BOOKMARK_TOKEN_THRESHOLD = '60,75';
+    process.env.BOOKMARK_CONTEXT_LIMIT = '500000';
+    try {
+      const cfg = loadConfig(empty);
+      expect(cfg.tokenThresholds).toEqual([0.6, 0.75]);
+      expect(cfg.contextLimitTokens).toBe(500_000);
+    } finally {
+      if (previousThreshold === undefined) delete process.env.BOOKMARK_TOKEN_THRESHOLD;
+      else process.env.BOOKMARK_TOKEN_THRESHOLD = previousThreshold;
+      if (previousLimit === undefined) delete process.env.BOOKMARK_CONTEXT_LIMIT;
+      else process.env.BOOKMARK_CONTEXT_LIMIT = previousLimit;
+    }
+  });
+
+  it('persists token settings without erasing the interval', () => {
+    const repo = join(base, 'repo');
+    mkdirSync(join(repo, '.bookmark'), { recursive: true });
+    writeConfig(repo, { intervalMinutes: 7 });
+    writeConfig(repo, { tokenThresholds: [0.75], contextLimitTokens: 500_000 });
+
+    const cfg = loadConfig(repo);
+    expect(cfg.intervalMinutes).toBe(7);
+    expect(cfg.tokenThresholds).toEqual([0.75]);
+    expect(cfg.contextLimitTokens).toBe(500_000);
+  });
+
+  it('writes configuration at the resolved repo root from a subdirectory', () => {
+    const repo = join(base, 'repo');
+    mkdirSync(join(repo, '.git'), { recursive: true });
+    const subdirectory = join(repo, 'src');
+    mkdirSync(subdirectory);
+
+    writeConfig(subdirectory, { tokenThresholds: [0.75] });
+
+    expect(loadConfig(repo).tokenThresholds).toEqual([0.75]);
+    expect(loadConfig(subdirectory).tokenThresholds).toEqual([0.75]);
   });
 });

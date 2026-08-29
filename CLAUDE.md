@@ -5,19 +5,19 @@
 
 ## What Bookmark Does
 
-Bookmark preserves session context across terminal closures and compactions. You (Claude) write a brief summary to bookmark.context.md before stopping or compacting. On the next session start, that summary is restored so you can pick up where you left off.
+Bookmark preserves session context across terminal closures and compactions. You (Claude) refresh `bookmark.context.md` when the token threshold fires and before stopping. A mechanical PreCompact snapshot preserves file/tool evidence. On the next session start, the semantic handoff is restored so you can pick up where you left off.
 
 ## How It Works
 
 **Hooks** (configured in settings.json, all command-type):
 - **Stop** — Blocks once if bookmark.context.md is stale, asking you to write it before exit
-- **PreCompact** — Captures files, sends systemMessage asking for bookmark.context.md update
+- **PreCompact** — Captures a mechanical file/tool checkpoint before compaction
 - **SessionStart** — Restores bookmark.context.md content on startup, cleans session state
-- **UserPromptSubmit** — Periodic file change tracking (async, silent)
+- **UserPromptSubmit** — Measures transcript usage, captures time-based checkpoints, and at 75% asks you to refresh the handoff and recommend a new session
 
-**You write the summary.** The Stop hook blocks exit once if you haven't written `.bookmark/bookmark.context.md` recently (<2 min). Write task status, progress, decisions, and files modified. On retry, it always approves (max 1 block).
+**You write the summary.** The Stop hook blocks exit once if `.bookmark/bookmark.context.md` is stale (<2 min). Keep the handoff under 800 tokens with current task, status, remaining work, decisions, risks and open questions, sources of truth, and next steps. Separate completed, validated, committed, pushed, and deployed work. Use absolute file paths and durable pointers. On retry, Stop always approves (max 1 block).
 
-**File tracking is automatic.** The UserPromptSubmit hook captures file changes and tool usage from the transcript. This data supplements your summary in `trails/files.md`.
+**File tracking is automatic.** The UserPromptSubmit hook captures file changes and tool usage when its interval or token threshold is due. This data supplements your summary in `trails/files.md`.
 
 ## Identity Block (v0.4+)
 

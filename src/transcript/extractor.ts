@@ -30,7 +30,7 @@ function toProjectRelative(filePath: string, projectPath?: string): string {
  *
  * Removed: decision extraction, open items, unknowns, errors, sentiment, status.
  * These produced noise (not signal) via regex. Claude writes semantic content
- * directly via prompt-type hooks instead.
+ * when a lifecycle or token hook requests the handoff instead.
  *
  * Kept: file change tracking (accurate) and tool usage summary (accurate).
  */
