@@ -1,4 +1,4 @@
-<!-- Plugin: bookmark · Version: 0.3.2 · Source of truth: local (~/dev/git-folder/bookmark) -->
+<!-- Plugin: bookmark · Version: 0.3.3 · Source of truth: local (~/dev/git-folder/bookmark) -->
 <!-- Before any commit, version bump, or major change, read ./VERSIONING.md. Update it on version bumps. -->
 
 # Bookmark — Session Continuity for Claude Code

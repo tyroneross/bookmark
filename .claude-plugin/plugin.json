@@ -2,8 +2,7 @@
   "name": "bookmark",
   "description": "Auto-save and restore session context across compactions and restarts",
   "author": {
-    "name": "Tyrone Ross",
-    "url": "https://github.com/tyroneross"
+    "name": "Tyrone Ross"
   },
   "homepage": "https://github.com/tyroneross/bookmark",
   "repository": "https://github.com/tyroneross/bookmark",

@@ -79,7 +79,7 @@ Hooks are configured automatically. Start a Claude Code session and you're cover
 npm install -g @tyroneross/bookmark
 ```
 
-Then activate in any project by typing `/bookmark:activate` in a Claude Code session, or run `bookmark setup` in your project directory.
+Then activate in any project by running `bookmark setup` in your project directory.
 
 ## Commands
 
@@ -87,11 +87,11 @@ Use these inside Claude Code:
 
 | Command | What it does |
 |---------|-------------|
+| `/bookmark` | Show current session context and bookmark status; forwards any arguments to the bookmark CLI |
 | `/bookmark:snapshot` | Take a manual snapshot right now |
 | `/bookmark:restore` | Restore from latest or a specific snapshot |
 | `/bookmark:status` | Show snapshot count, compaction cycles, last snapshot time |
 | `/bookmark:list` | List available snapshots with details |
-| `/bookmark:activate` | Set up Bookmark for the current project |
 
 ## CLI
 

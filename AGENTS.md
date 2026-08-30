@@ -74,19 +74,21 @@ Defined in `hooks/hooks.json`. All are `command` type, invoking the CLI via `npx
 
 To change hook behavior, edit `hooks/hooks.json`. Timeouts are in milliseconds (Stop: 10000, PreCompact: 10000, SessionStart: 5000, UserPromptSubmit: 10000).
 
-## Commands (7 slash commands)
+## Commands (6 slash commands, down from 8)
 
-Each command is a single Markdown file in `commands/`. These files are the single source of truth — they are read by both the plugin system and `npm postinstall`. Do not split logic between a command file and a separate implementation file.
+Each command is a single Markdown file in `commands/`. These files are the single source of truth for the plugin system. `activate` and `verify` were removed (2026 surface reduction — zero recorded uses across 1,663 mined sessions, and neither was referenced by any script/hook/agent). `list`, `restore`, `snapshot`, and `status` were kept even though the target is a single router entry point, because `src/setup/auto-setup.ts`, `src/cli/index.ts`, `src/restore/index.ts`, and `scripts/install-plugin.sh` all print these exact slash-command names to users at runtime — deleting the files would leave the CLI recommending dead commands. Do not split logic between a command file and a separate implementation file.
 
 | Command | File | Purpose |
 |---------|------|---------|
-| `/bookmark:activate` | `commands/activate.md` | Run setup for a project; configure hooks and storage |
-| `/bookmark:bookmark` | `commands/bookmark.md` | Show current session context and bookmark status (bare command) |
+| `/bookmark:bookmark` | `commands/bookmark.md` | Router / bare command — show current session context and bookmark status, or forward arguments to the CLI |
 | `/bookmark:list` | `commands/list.md` | List all snapshots with timestamps and triggers |
 | `/bookmark:restore` | `commands/restore.md` | Load and display snapshot context for continuation |
 | `/bookmark:snapshot` | `commands/snapshot.md` | Capture a manual snapshot and write `bookmark.context.md` |
 | `/bookmark:status` | `commands/status.md` | Show snapshot stats: count, freshness, thresholds |
-| `/bookmark:verify` | `commands/verify.md` | Verify `bookmark.context.md` against 5 durability rules |
+| `/bookmark:feedback` | `commands/feedback.md` | Report a bug or send feedback |
+
+To activate Bookmark for a project without the removed `/bookmark:activate` command, run
+`npx @tyroneross/bookmark setup --defaults` directly (that's all the command ever did).
 
 ## Key behaviors (Codex must honor)
 
@@ -147,9 +149,11 @@ warning reads as noise and the agent acts on stale facts. When the restore path 
 staleness message, present it verbatim and prompt the user for direction rather than
 proceeding on the old context.
 
-### `/bookmark:verify` — durability quality check
+### Durability quality check
 
-Run after writing `bookmark.context.md` to confirm it will survive a cold restart:
+No slash command for this (removed in the 0.4 surface reduction — zero recorded uses across
+1,663 mined sessions). Run the checker directly after writing `bookmark.context.md` to confirm
+it will survive a cold restart:
 
 ```bash
 python3 ~/.claude/scripts/bookmark-verify.py

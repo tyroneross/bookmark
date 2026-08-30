@@ -2,13 +2,13 @@
 
 ## Current
 
-- **Version:** 0.3.2
+- **Version:** 0.3.3
 - **Source of truth:** Local dev (`~/Desktop/git-folder/bookmark`)
 - **Also available at:**
   - GitHub: https://github.com/tyroneross/bookmark
   - npm: `@tyroneross/bookmark`
   - Marketplace: `bookmark` in `RossLabs-AI-Toolkit` (via GitHub source)
-- **Claude Code cache mirror (marketplace scope):** `~/.claude/plugins/cache/bookmark/bookmark/0.3.2/`
+- **Claude Code cache mirror (marketplace scope):** `~/.claude/plugins/cache/bookmark/bookmark/0.3.3/`
 
 ## Key changes in 0.3.2
 
@@ -44,5 +44,6 @@ When "latest" is ambiguous, trust **local dev** first, then npm, then marketplac
 
 ## Version history
 
-- **0.3.2** (current): Stop/precompact stdin fix, marketplace schema conformance, auto-discovery of manifest fields
+- **0.3.3** (current): Surface reduction — deleted `commands/activate.md` and `commands/verify.md` (zero recorded slash-command uses across 1,663 mined sessions, no script/hook/agent references). Kept `list`, `restore`, `snapshot`, `status` because live source (`src/setup/auto-setup.ts`, `src/cli/index.ts`, `src/restore/index.ts`, `scripts/install-plugin.sh`) prints those exact command names to users.
+- **0.3.2**: Stop/precompact stdin fix, marketplace schema conformance, auto-discovery of manifest fields
 - Prior versions: Not tracked in this file; see `git log` for detail
