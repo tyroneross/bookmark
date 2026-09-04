@@ -1,6 +1,6 @@
 {
   "name": "@tyroneross/bookmark",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Context snapshots for agent sessions, compactions, and terminal workflows",
   "type": "module",
   "main": "dist/index.js",
