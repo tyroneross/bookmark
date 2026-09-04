@@ -2,6 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
   "release-type": "node",
   "include-v-in-tag": true,
+  "last-release-sha": "95fe39573b9962cf250cc0ab58605f84ae1224a3",
   "changelog-sections": [
     {
       "type": "feat",
@@ -58,8 +59,7 @@
   "packages": {
     ".": {
       "package-name": "@tyroneross/bookmark",
-      "changelog-path": "CHANGELOG.md",
-      "last-release-sha": "95fe39573b9962cf250cc0ab58605f84ae1224a3"
+      "changelog-path": "CHANGELOG.md"
     }
   }
 }
