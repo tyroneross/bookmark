@@ -76,3 +76,10 @@ Estimated size: bookmark ~150 lines TS + hook wiring; build-loop: delete or impl
 - Cold `npx @tyroneross/bookmark` latency vs the 5000ms SessionStart timeout (P2). A silent timeout is an empty restore after context is already gone.
 - Whether two concurrent Codex sessions break `transcript_adapter` rollout selection (P4).
 - Live nonce test on Codex hooks (JSON path) has not been run.
+
+## 8. Decisions and corrections (2026-09-05, later same day)
+
+- **Decided:** Rally Point owns the inject/deliver home. `~/.codex/hooks.json` already runs `rally-hook.sh start codex` on SessionStart, and `rally inject --handoff` already waits for target-authored evidence, so the nonce/receipt pattern is native there.
+- **Corrected:** Codex SessionStart hooks DO add plain stdout as developer context ("Plain text on stdout is added as extra developer context", learn.chatgpt.com/docs/hooks). JSON is still preferred for the `additionalContextLimit` spill behaviour (default 2500 tokens; overflow saved to `<temp_dir>/hook_outputs/` with a head/tail preview).
+- **Verified:** Codex loads hooks from every layer and runs them system → user → project → plugin; higher layers do not replace lower ones. A repo `.codex/hooks.json` entry is therefore an addendum after the user-level rally hook; a second user-level entry ordered before it is a pre-empt.
+- **Verified:** `rally run` launches claude, codex, opencode, gemini (`crates/rally-cli/src/backends.rs`); `--task` is Codex-only. Cursor is not supported; its `agent` CLI needs a real TTY, which a tmux pane provides.
