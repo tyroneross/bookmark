@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2025-2026 Tyrone Ross, Jr <46267523+tyroneross@users.noreply.github.com>
+# SPDX-License-Identifier: Apache-2.0
+name: CI
+
+# THE MAIN-GREEN SIGNAL. release-weekly-merge.yml's Guard 1 can read the newest
+# completed run of this exact filename on main and refuse to cut a release
+# unless its conclusion is `success`. Before this workflow existed, main had
+# nothing that ran its tests on push, so that guard had no signal and is still
+# disabled (CI_WORKFLOW_FILE: ""). Once this workflow has a green run on main,
+# set CI_WORKFLOW_FILE: "ci.yml" there to enable it. After that, renaming this
+# file breaks Guard 1: the API lookup 404s and the weekly cut fails.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Superseded PR runs are still cancelled -- there is no reason to finish
+# testing a commit nobody will merge. Main is the one ref that is never
+# cancelled: the weekly cut reads the newest COMPLETED ci.yml run on main and
+# treats any conclusion other than `success` as red, so a cancelled main run
+# would block a release for a reason no test caused.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      # engines says >=20 and vitest 4 accepts ^20 || ^22 || >=24, so 20 is
+      # the real floor and 24 is what publish.yml ships on. Odd majors 21 and
+      # 23 are outside vitest's own engines range and are not tested.
+      matrix:
+        node-version: ['20', '24']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      # --ignore-scripts, matching publish.yml. postinstall runs
+      # `node dist/setup/auto-setup.js`, and dist/ does not exist until the
+      # build step below, so without the flag install executes a file that
+      # is not there yet.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Build
+        run: npm run build
+
+      # Build runs before test to match publish.yml's order and to catch a
+      # tsc failure as its own red step, but the suite itself does not need
+      # dist/: every *.test.ts under src/ imports its sibling source module
+      # directly (e.g. './storage.js', './config.js'), and vitest resolves
+      # those against the .ts source, not the compiled output.
+      - name: Test
+        run: npm test
