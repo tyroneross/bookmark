@@ -6,3 +6,6 @@ dist/
 .env.local
 .bookmark/
 .archive/
+
+# build-loop runtime state (local only)
+.build-loop/
