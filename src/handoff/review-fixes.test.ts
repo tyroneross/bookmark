@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { restoreContext } from '../restore/index.js';
 import { writeFileAtomic } from '../util/atomic-write.js';
 import { getLineagePath, getSessionHandoffPath, getSessionStopMarkerPath } from './paths.js';
-import { INDEX_MARKER, listLineage, readLineage, sealHandoff, verifyLine } from './lineage.js';
+import { INDEX_MARKER, findLineageByPane, listLineage, readLineage, sealHandoff, verifyLine } from './lineage.js';
 import { decideStop, sealIfChanged } from './stop.js';
 import { isEasyTerminalDriving } from './toggle.js';
 
@@ -138,9 +138,9 @@ describe('R2 compact and staleness', () => {
     writeHandoff(storagePath, 'earlier', 'Earlier session task.');
     sealHandoff({ storagePath, cwd, sessionId: 'earlier', pid: '5', head: null });
 
-    const other = restoreContext({ cwd, source: 'compact', sessionId: 'current', pid: '5' }).systemMessage!;
-    expect(other).not.toContain('Earlier session task.');
-    expect(other).toContain('no handoff is linked');
+    // Nothing sealed by this session: inject nothing (no index, no question).
+    expect(restoreContext({ cwd, source: 'compact', sessionId: 'current', pid: '5' })).toEqual({});
+    expect(restoreContext({ cwd, source: 'compact', sessionId: 'current', pid: '6' })).toEqual({});
 
     writeHandoff(storagePath, 'current', 'Current session task.');
     sealHandoff({ storagePath, cwd, sessionId: 'current', pid: '5', head: null });
@@ -174,31 +174,41 @@ describe('R3 C7 stand-down and C8 reset marker', () => {
     return dir;
   }
 
-  function writeTap(stateDir: string, pane: string, ageMs = 0): void {
-    const path = join(stateDir, 'context-tap', `${pane}.json`);
-    mkdirSync(join(stateDir, 'context-tap'), { recursive: true });
-    writeFileSync(path, '{}');
+  function writeDriving(stateDir: string, pane: string, ageMs = 0): void {
+    const dir = join(stateDir, 'context-handoff', 'driving');
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${pane}.json`);
+    writeFileSync(path, JSON.stringify({ pane, written_at: new Date().toISOString() }));
     if (ageMs) ageFile(path, ageMs);
   }
 
-  it('detects Easy Terminal driving the pane only with a fresh tap file and the toggle on', () => {
+  it("detects Easy Terminal driving the pane only with a driving file <= 60 s old and the toggle on (C7')", () => {
     const on = etState();
-    writeTap(on, 'P');
+    writeDriving(on, 'P');
     expect(isEasyTerminalDriving({ ET_STATE_DIR: on, EASY_TERMINAL_PANE_ID: 'P' })).toBe(true);
     expect(isEasyTerminalDriving({ ET_APP_STATE_DIR: on, EASY_TERMINAL_PANE_ID: 'P' })).toBe(true);
     expect(isEasyTerminalDriving({ ET_STATE_DIR: on, EASY_TERMINAL_PANE_ID: 'Q' })).toBe(false);
     expect(isEasyTerminalDriving({ ET_STATE_DIR: on })).toBe(false);
 
     const stale = etState();
-    writeTap(stale, 'P', 11 * 60_000);
+    writeDriving(stale, 'P', 61_000);
     expect(isEasyTerminalDriving({ ET_STATE_DIR: stale, EASY_TERMINAL_PANE_ID: 'P' })).toBe(false);
+    const recent = etState();
+    writeDriving(recent, 'P', 50_000);
+    expect(isEasyTerminalDriving({ ET_STATE_DIR: recent, EASY_TERMINAL_PANE_ID: 'P' })).toBe(true);
+
+    // The context-tap file is no longer the signal.
+    const tapOnly = etState();
+    mkdirSync(join(tapOnly, 'context-tap'), { recursive: true });
+    writeFileSync(join(tapOnly, 'context-tap', 'P.json'), '{}');
+    expect(isEasyTerminalDriving({ ET_STATE_DIR: tapOnly, EASY_TERMINAL_PANE_ID: 'P' })).toBe(false);
 
     const off = etState('{"enabled": false}');
-    writeTap(off, 'P');
+    writeDriving(off, 'P');
     expect(isEasyTerminalDriving({ ET_STATE_DIR: off, EASY_TERMINAL_PANE_ID: 'P' })).toBe(false);
 
     const unreadable = etState('{broken');
-    writeTap(unreadable, 'P');
+    writeDriving(unreadable, 'P');
     expect(isEasyTerminalDriving({ ET_STATE_DIR: unreadable, EASY_TERMINAL_PANE_ID: 'P' })).toBe(true);
   });
 
@@ -253,12 +263,12 @@ describe('R3 C7 stand-down and C8 reset marker', () => {
     const env = { ET_STATE_DIR: stateDir, EASY_TERMINAL_PANE_ID: 'P' };
 
     writeMarker(stateDir, 'P', { path: snapshot, sha256: 'a'.repeat(64), written_at: 'x' });
-    const mismatch = restoreContext({ cwd, source: 'startup', sessionId: 's1', env }).systemMessage!;
+    const mismatch = restoreContext({ cwd, source: 'clear', sessionId: 's1', env }).systemMessage!;
     expect(mismatch).toContain(`WARNING: the file's current sha256 is ${sha(snapshot)}`);
     expect(mismatch).toContain(verifyLine(snapshot, 'a'.repeat(64)));
 
     writeMarker(stateDir, 'P', { path: join(stateDir, 'gone.md'), sha256: 'b'.repeat(64) });
-    const missing = restoreContext({ cwd, source: 'startup', sessionId: 's2', env }).systemMessage!;
+    const missing = restoreContext({ cwd, source: 'clear', sessionId: 's2', env }).systemMessage!;
     expect(missing).toContain('WARNING: the handoff file is missing.');
   });
 
@@ -284,9 +294,32 @@ describe('R3 C7 stand-down and C8 reset marker', () => {
     expect(restoreContext({ cwd, source: 'clear', sessionId: 'c', paneId: 'P', pid: '1', env }).systemMessage)
       .toContain('Lineage task.');
 
-    writeMarker(stateDir, 'P', { path: snapshot, sha256: sha(snapshot) });
+    const fresh = writeMarker(stateDir, 'P', { path: snapshot, sha256: sha(snapshot) });
     const compact = restoreContext({ cwd, source: 'compact', sessionId: 'lineage-sess', paneId: 'P', pid: '1', env }).systemMessage!;
     expect(compact).not.toContain('Snapshot task.');
+
+    // C8': startup neither injects nor consumes the marker; only /clear does.
+    const startup = restoreContext({ cwd, source: 'startup', sessionId: 'd', paneId: 'P', pid: '1', env }).systemMessage!;
+    expect(startup).not.toContain('Snapshot task.');
+    expect(existsSync(fresh)).toBe(true);
+    expect(restoreContext({ cwd, source: 'clear', sessionId: 'e', paneId: 'P', pid: '1', env }).systemMessage)
+      .toContain('Snapshot task.');
+    expect(existsSync(fresh)).toBe(false);
+  });
+});
+
+describe('kickoff by pane without a pid', () => {
+  it('returns the newest record sealed from that pane by any process', () => {
+    const { cwd, storagePath } = tempRepo();
+    writeHandoff(storagePath, 'parent', 'Parent.');
+    sealHandoff({ storagePath, cwd, sessionId: 'parent', paneId: 'P', pid: '1', head: null, now: new Date(Date.now() - 60_000) });
+    writeHandoff(storagePath, 'child', 'Child.');
+    sealHandoff({ storagePath, cwd, sessionId: 'child', paneId: 'P', pid: '2', head: null });
+    writeHandoff(storagePath, 'other', 'Other.');
+    sealHandoff({ storagePath, cwd, sessionId: 'other', paneId: 'Q', pid: '3', head: null });
+    expect(findLineageByPane(storagePath, 'P')?.session_id).toBe('child');
+    expect(findLineageByPane(storagePath, 'Q')?.session_id).toBe('other');
+    expect(findLineageByPane(storagePath, 'Z')).toBeNull();
   });
 });
 

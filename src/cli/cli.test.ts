@@ -76,6 +76,11 @@ describe('R7 / A8 handoff CLI', () => {
     expect(kickoff.stdout).toContain(`Verify first: \`shasum -a 256 '${handoff}'\` must print ${record.sha256}.`);
     expect(run(['handoff', 'kickoff', '--pane', 'P', '--pid', '42', '--cwd', repo], undefined).status).toBe(0);
     expect(run(['handoff', 'kickoff', '--session', 'nobody', '--cwd', repo], undefined).status).toBe(1);
+    // --pane without --pid: newest record sealed from that pane.
+    const byPane = run(['handoff', 'kickoff', '--pane', 'P', '--cwd', repo], undefined);
+    expect(byPane.status).toBe(0);
+    expect(byPane.stdout).toContain(record.sha256);
+    expect(run(['handoff', 'kickoff', '--pane', 'nope', '--cwd', repo], undefined).status).toBe(1);
 
     expect(run(['handoff', 'verify', '--path', handoff, '--sha', record.sha256], undefined).status).toBe(0);
     expect(run(['handoff', 'verify', '--path', handoff, '--sha', '0'.repeat(64)], undefined).status).toBe(1);

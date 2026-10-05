@@ -89,8 +89,8 @@ export function restoreContext(options: RestoreOptions): HookOutput {
   const env = options.env ?? process.env;
   const source = options.source ?? 'startup';
 
-  // C8: a fresh Easy Terminal reset marker names the exact file to resume.
-  if (source === 'clear' || source === 'startup') {
+  // C8': a fresh Easy Terminal reset marker names the exact file to resume; only /clear consumes it.
+  if (source === 'clear') {
     const marker = readResetMarker(env);
     if (marker) {
       const message = buildVerifiedRestoration(
@@ -115,9 +115,9 @@ export function restoreContext(options: RestoreOptions): HookOutput {
     const paneId = options.paneId ?? currentPaneId(env);
     const pid = options.pid ?? currentClaudePid(env);
     const key = lineageKey({ paneId, pid, sessionId });
-    let record = key ? readLineage(storagePath, key) : null;
-    // After compaction the session continues; only its own handoff applies.
-    if (record && source === 'compact' && record.session_id !== sessionId) record = null;
+    const record = key ? readLineage(storagePath, key) : null;
+    // After compaction the session continues; only its own handoff applies, else inject nothing.
+    if (source === 'compact' && record?.session_id !== sessionId) return {};
     const message = record
       ? buildLineageRestoration(key!, record)
       : [

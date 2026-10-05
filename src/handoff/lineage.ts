@@ -153,6 +153,11 @@ export function migrateLegacyContextMd(storagePath: string, now = new Date()): L
   });
 }
 
+/** Newest record sealed from a pane, whichever process in it sealed it. */
+export function findLineageByPane(storagePath: string, paneId: string): LineageRecord | null {
+  return listLineage(storagePath).find(record => record.pane === paneId) ?? null;
+}
+
 /** Newest record written by a session, whatever key it was sealed under. */
 export function findLineageBySession(storagePath: string, sessionId: string): LineageRecord | null {
   return listLineage(storagePath).find(record => record.session_id === sessionId) ?? null;

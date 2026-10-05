@@ -30,6 +30,7 @@ import { currentClaudePid, currentPaneId, getSessionHandoffPath, lineageKey } fr
 import { isEasyTerminalDriving, isHandoffEnabled } from '../handoff/toggle.js';
 import {
   buildKickoff,
+  findLineageByPane,
   findLineageBySession,
   listLineage,
   readLineage,
@@ -977,7 +978,7 @@ handoffCommand
 handoffCommand
   .command('kickoff')
   .description('Print the verified kickoff text for the handoff linked to a pane or session')
-  .option('--pane <id>', 'Pane id (default: EASY_TERMINAL_PANE_ID)')
+  .option('--pane <id>', 'Pane id; without --pid, the newest handoff sealed from that pane (default: EASY_TERMINAL_PANE_ID)')
   .option('--pid <pid>', 'Claude process id (default: CLAUDE_PID)')
   .option('--session <id>', 'Find the handoff sealed by this session id, under any key')
   .option('--cwd <path>', 'Working directory')
@@ -989,6 +990,10 @@ handoffCommand
     if (opts.session) {
       label = `session ${opts.session}`;
       record = findLineageBySession(storagePath, opts.session);
+    } else if (opts.pane && !opts.pid) {
+      // A pane alone: the newest handoff sealed from that pane by any process.
+      label = `pane ${opts.pane}`;
+      record = findLineageByPane(storagePath, opts.pane);
     } else {
       const key = lineageKey({
         paneId: opts.pane ?? currentPaneId(),

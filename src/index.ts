@@ -57,6 +57,8 @@ export { lineageKey, getSessionHandoffPath } from './handoff/paths.js';
 export type { LineageRecord } from './handoff/lineage.js';
 export {
   buildKickoff,
+  findLineageByPane,
+  findLineageBySession,
   listLineage,
   readLineage,
   sealHandoff,
