@@ -16,7 +16,7 @@ import {
   getSnapshotCount,
 } from "../snapshot/storage.js";
 import { restoreContext } from "../restore/index.js";
-import { loadState } from "../threshold/state.js";
+import { loadLatestSessionState } from "../threshold/state.js";
 import { readContextMd } from "../trails/reader.js";
 import { parseIdentity, validateRepoIdentity } from "../trails/identity.js";
 import type { SnapshotTrigger } from "../types.js";
@@ -285,7 +285,7 @@ async function handleStatus(): Promise<{
   const storagePath = getStoragePath(cwd, config);
 
   const count = getSnapshotCount(storagePath);
-  const state = loadState(storagePath);
+  const state = loadLatestSessionState(storagePath);
   const latest = loadLatestSnapshot(storagePath);
   const warning = identityMismatchWarning(storagePath, cwd);
 

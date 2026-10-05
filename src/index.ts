@@ -35,7 +35,7 @@ export {
 export { restoreContext } from './restore/index.js';
 export { parseTranscript } from './transcript/parser.js';
 export { extractFilesAndTools } from './transcript/extractor.js';
-export { loadState, saveState } from './threshold/state.js';
+export { loadState, saveState, loadSessionState, saveSessionState } from './threshold/state.js';
 export { getThreshold, shouldSnapshotByThreshold } from './threshold/adaptive.js';
 export { checkTimeInterval } from './threshold/time-based.js';
 export type {
@@ -51,3 +51,17 @@ export {
 } from './threshold/token-usage.js';
 export { buildHandoffPrompt } from './context/handoff-prompt.js';
 export { isContextMdFresh } from './context/freshness.js';
+export { writeFileAtomic } from './util/atomic-write.js';
+export { isHandoffEnabled, readEasyTerminalToggle } from './handoff/toggle.js';
+export { lineageKey, getSessionHandoffPath } from './handoff/paths.js';
+export type { LineageRecord } from './handoff/lineage.js';
+export {
+  buildKickoff,
+  listLineage,
+  readLineage,
+  sealHandoff,
+  sha256File,
+  verifyHandoff,
+  verifyLine,
+} from './handoff/lineage.js';
+export { decideStop, sealIfChanged } from './handoff/stop.js';

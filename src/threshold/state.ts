@@ -1,5 +1,7 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { writeFileAtomic } from '../util/atomic-write.js';
+import { getSessionDir } from '../handoff/paths.js';
 import type { BookmarkState, SessionEntry } from '../types.js';
 
 const STATE_VERSION = '1.0.0';
@@ -37,12 +39,50 @@ export function loadState(storagePath: string): BookmarkState {
 }
 
 export function saveState(storagePath: string, state: BookmarkState): void {
-  const statePath = getStatePath(storagePath);
-  const dir = dirname(statePath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+  writeFileAtomic(getStatePath(storagePath), JSON.stringify(state, null, 2));
+}
+
+/**
+ * Per-session state lives at `<storage>/sessions/<sid>/state.json` so
+ * concurrent sessions in one repo never share threshold dedupe or counters.
+ * Without a session id, callers fall back to the legacy repo-level file.
+ * A new session seeds only configuration (the snapshot interval) from the
+ * legacy repo-level state, which is read but never written here.
+ */
+export function loadSessionState(storagePath: string, sessionId?: string): BookmarkState {
+  if (!sessionId) return loadState(storagePath);
+  const sessionDir = getSessionDir(storagePath, sessionId);
+  if (existsSync(getStatePath(sessionDir))) return loadState(sessionDir);
+  const legacy = loadState(storagePath);
+  return {
+    ...defaultState(),
+    session_id: sessionId,
+    snapshot_interval_minutes: legacy.snapshot_interval_minutes,
+  };
+}
+
+export function saveSessionState(storagePath: string, sessionId: string | undefined, state: BookmarkState): void {
+  if (!sessionId) {
+    saveState(storagePath, state);
+    return;
   }
-  writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf-8');
+  saveState(getSessionDir(storagePath, sessionId), state);
+}
+
+/** Most recently written session state, else the legacy repo-level state (for status views). */
+export function loadLatestSessionState(storagePath: string): BookmarkState {
+  const sessionsDir = join(storagePath, 'sessions');
+  let newest: { dir: string; mtime: number } | null = null;
+  try {
+    for (const name of readdirSync(sessionsDir)) {
+      const statePath = join(sessionsDir, name, 'state.json');
+      try {
+        const mtime = statSync(statePath).mtimeMs;
+        if (!newest || mtime > newest.mtime) newest = { dir: join(sessionsDir, name), mtime };
+      } catch { /* session without state */ }
+    }
+  } catch { /* no sessions dir */ }
+  return newest ? loadState(newest.dir) : loadState(storagePath);
 }
 
 export function incrementCompaction(state: BookmarkState, thresholds: number[]): BookmarkState {

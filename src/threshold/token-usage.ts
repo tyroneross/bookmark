@@ -56,11 +56,16 @@ export function resolveContextLimit(model: string, override?: number): number | 
   return hasTwoHundredThousandContext ? 200_000 : null;
 }
 
-/** Read only the transcript tail and return the latest assistant usage record. */
+/**
+ * Read only the transcript tail and return the latest assistant usage record.
+ * When `sessionId` is given, records stamped with a different `sessionId`
+ * are skipped so one session never measures another's usage.
+ */
 export function readLatestContextUsage(
   transcriptPath: string,
   contextLimitOverride?: number,
-  pendingPrompt = ''
+  pendingPrompt = '',
+  sessionId?: string
 ): ContextUsageObservation | null {
   if (!existsSync(transcriptPath)) return null;
 
@@ -89,6 +94,7 @@ export function readLatestContextUsage(
       try {
         const record = JSON.parse(line) as Record<string, unknown>;
         if (typeof record.type === 'string' && record.type !== 'assistant') continue;
+        if (sessionId && typeof record.sessionId === 'string' && record.sessionId !== sessionId) continue;
         const message = isRecord(record.message) ? record.message : record;
         const usage = isRecord(message.usage) ? message.usage as RawUsage : null;
         const model = typeof message.model === 'string' ? message.model : null;

@@ -14,14 +14,27 @@ export function isContextMdFresh(
 
   try {
     const contextStat = statSync(contextPath);
-    if (contextStat.size < 200) return false;
     if (now - contextStat.mtimeMs >= MAX_HANDOFF_AGE_MS) return false;
 
     if (existsSync(markerPath) && contextStat.mtimeMs <= statSync(markerPath).mtimeMs) {
       return false;
     }
 
-    const content = readFileSync(contextPath, 'utf8');
+    return passesHandoffChecks(contextPath);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Content checks only (no age): repo identity with project and repo_path and
+ * every required heading. The generated repo-level index never passes.
+ */
+export function passesHandoffChecks(path: string): boolean {
+  try {
+    if (statSync(path).size < 200) return false;
+    const content = readFileSync(path, 'utf8');
+    if (content.startsWith('<!-- BOOKMARK_INDEX')) return false;
     const { identity } = parseIdentity(content);
     if (identity?.scope !== 'repo' || !identity.project || !identity.repo_path) return false;
 

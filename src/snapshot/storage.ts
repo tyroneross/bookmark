@@ -1,4 +1,5 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
+import { writeFileAtomic } from '../util/atomic-write.js';
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import type { Snapshot, SnapshotIndex, SnapshotEntry } from '../types.js';
@@ -45,7 +46,7 @@ export function storeSnapshot(storagePath: string, snapshot: Snapshot): string {
 
   const snapshotId = snapshot.snapshot_id || generateSnapshotId();
   const snapshotPath = join(getSnapshotsDir(storagePath), `${snapshotId}.json`);
-  writeFileSync(snapshotPath, JSON.stringify(snapshot, null, 2), 'utf-8');
+  writeFileAtomic(snapshotPath, JSON.stringify(snapshot, null, 2));
 
   // Update index
   updateIndex(storagePath, snapshot);
@@ -85,7 +86,7 @@ export function listSnapshots(storagePath: string, limit = 10): SnapshotEntry[] 
 
 export function writeLatestMd(storagePath: string, content: string): void {
   ensureStorageDirs(storagePath);
-  writeFileSync(getLatestPath(storagePath), content, 'utf-8');
+  writeFileAtomic(getLatestPath(storagePath), content);
 }
 
 export function readLatestMd(storagePath: string): string | null {
@@ -156,7 +157,7 @@ function updateIndex(storagePath: string, snapshot: Snapshot): void {
     index.snapshots.length = 50;
   }
 
-  writeFileSync(indexPath, JSON.stringify(index, null, 2), 'utf-8');
+  writeFileAtomic(indexPath, JSON.stringify(index, null, 2));
 }
 
 export function getSnapshotCount(storagePath: string): number {

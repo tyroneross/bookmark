@@ -3,9 +3,15 @@ import { buildHandoffPrompt } from './handoff-prompt.js';
 
 describe('buildHandoffPrompt', () => {
   it('requires the continuity fields a cold session needs while staying compact', () => {
-    const prompt = buildHandoffPrompt({ cwd: '/tmp/example-repo', reason: 'Threshold crossed.' });
+    const prompt = buildHandoffPrompt({
+      cwd: '/tmp/example-repo',
+      reason: 'Threshold crossed.',
+      handoffPath: '/tmp/example-repo/.bookmark/sessions/s1/handoff.md',
+      sessionId: 's1',
+    });
 
-    expect(prompt).toContain('/tmp/example-repo/.bookmark/bookmark.context.md');
+    expect(prompt).toContain('/tmp/example-repo/.bookmark/sessions/s1/handoff.md');
+    expect(prompt).not.toContain('bookmark.context.md');
     expect(prompt).toContain('BOOKMARK_IDENTITY');
     expect(prompt).toContain('Current task');
     expect(prompt).toContain('Status');

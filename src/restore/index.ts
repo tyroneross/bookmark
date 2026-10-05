@@ -1,4 +1,4 @@
-import { existsSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { readLatestMd, getSnapshotCount } from '../snapshot/storage.js';
 import { readContextMd } from '../trails/reader.js';
@@ -8,7 +8,18 @@ import {
   followPointer,
   type BookmarkIdentity,
 } from '../trails/identity.js';
-import { loadState, saveState, resetForNewSession, incrementCompaction } from '../threshold/state.js';
+import { loadSessionState, saveSessionState, resetForNewSession, incrementCompaction } from '../threshold/state.js';
+import { currentClaudePid, currentPaneId, getSessionStopMarkerPath, lineageKey } from '../handoff/paths.js';
+import { consumeResetMarker, readResetMarker } from '../handoff/reset-marker.js';
+import {
+  buildHandoffIndex,
+  isGeneratedIndex,
+  listLineage,
+  readLineage,
+  sha256File,
+  verifyLine,
+  type LineageRecord,
+} from '../handoff/lineage.js';
 import { loadConfig, getStoragePath } from '../config.js';
 import { touchLastProject } from '../registry.js';
 import type { HookOutput, BookmarkState } from '../types.js';
@@ -16,6 +27,12 @@ import type { HookOutput, BookmarkState } from '../types.js';
 export interface RestoreOptions {
   source?: 'startup' | 'resume' | 'compact' | 'clear';
   sessionId?: string;
+  /** Easy Terminal pane id; defaults to EASY_TERMINAL_PANE_ID. */
+  paneId?: string;
+  /** Claude process id; defaults to CLAUDE_PID. */
+  pid?: string;
+  /** Environment for the ET state dir and reset marker; defaults to process.env. */
+  env?: NodeJS.ProcessEnv;
   cwd: string;
   format?: 'system_message' | 'json' | 'markdown';
 }
@@ -48,21 +65,75 @@ const STALENESS_SOFT_WARN_HOURS = 24;
 export function restoreContext(options: RestoreOptions): HookOutput {
   const config = loadConfig(options.cwd);
   const storagePath = getStoragePath(options.cwd, config);
-  const state = loadState(storagePath);
+  const sessionId = options.sessionId;
+  // Per-session layout is active once any session has sealed a handoff.
+  // Decide before the transition below creates this session's directory.
+  const lineageRecords = listLineage(storagePath);
 
-  handleSessionTransition(storagePath, state, options, config.thresholds);
+  handleSessionTransition(storagePath, options, config.thresholds);
 
   const stopRequestedPath = join(storagePath, '.stop-requested');
   if (existsSync(stopRequestedPath)) {
     try { unlinkSync(stopRequestedPath); } catch { /* ignore */ }
   }
+  if (sessionId) {
+    const sessionMarker = getSessionStopMarkerPath(storagePath, sessionId);
+    if (existsSync(sessionMarker)) {
+      try { unlinkSync(sessionMarker); } catch { /* ignore */ }
+    }
+  }
 
   if (!config.restoreOnSessionStart) return {};
   if (options.source === 'resume') return {};
 
+  const env = options.env ?? process.env;
+  const source = options.source ?? 'startup';
+
+  // C8: a fresh Easy Terminal reset marker names the exact file to resume.
+  if (source === 'clear' || source === 'startup') {
+    const marker = readResetMarker(env);
+    if (marker) {
+      const message = buildVerifiedRestoration(
+        [
+          `[Bookmark: resuming the handoff Easy Terminal named for this pane before the reset]`,
+          `Pane: ${env.EASY_TERMINAL_PANE_ID?.trim() ?? 'none'}`,
+          `Path: ${marker.path}`,
+          `sha256: ${marker.sha256}`,
+          ...(marker.writtenAt ? [`Reset requested: ${marker.writtenAt}${marker.provider ? ` (${marker.provider})` : ''}`] : []),
+        ],
+        marker.path,
+        marker.sha256
+      );
+      consumeResetMarker(marker);
+      trackRestore(storagePath, sessionId, message.length);
+      touchLastProject(options.cwd);
+      return { systemMessage: message };
+    }
+  }
+
+  if (lineageRecords.length > 0) {
+    const paneId = options.paneId ?? currentPaneId(env);
+    const pid = options.pid ?? currentClaudePid(env);
+    const key = lineageKey({ paneId, pid, sessionId });
+    let record = key ? readLineage(storagePath, key) : null;
+    // After compaction the session continues; only its own handoff applies.
+    if (record && source === 'compact' && record.session_id !== sessionId) record = null;
+    const message = record
+      ? buildLineageRestoration(key!, record)
+      : [
+          `[Bookmark: no handoff is linked to this pane/session (${key ?? 'no pane or session id'}); pick one from the list]`,
+          'Do not guess. Ask the owner which handoff to resume if none clearly matches, and verify its sha256 first.',
+          '',
+          buildHandoffIndex(storagePath),
+        ].join('\n');
+    trackRestore(storagePath, sessionId, message.length);
+    touchLastProject(options.cwd);
+    return { systemMessage: message };
+  }
+
   // Primary: bookmark.context.md with identity-aware handling
   const rawContextMd = readContextMd(storagePath);
-  if (rawContextMd && isContextMdUseful(rawContextMd)) {
+  if (rawContextMd && !isGeneratedIndex(rawContextMd) && isContextMdUseful(rawContextMd)) {
     const contextPath = join(storagePath, 'bookmark.context.md');
     const { identity, bodyWithoutIdentity } = parseIdentity(rawContextMd);
 
@@ -72,7 +143,7 @@ export function restoreContext(options: RestoreOptions): HookOutput {
       if (target) {
         const targetAge = target.staleness_hours ?? 0;
         if (targetAge >= STALENESS_HARD_BLOCK_HOURS) {
-          trackRestore(storagePath, 0);
+          trackRestore(storagePath, sessionId, 0);
           return { systemMessage: buildHardStalenessMessage(target.canonical_path, targetAge) };
         }
 
@@ -80,7 +151,7 @@ export function restoreContext(options: RestoreOptions): HookOutput {
         const { bodyWithoutIdentity: targetBody } = parseIdentity(target.content);
         const header = buildPointerFollowHeader(identity, target.canonical_path, targetAge);
         const message = `${header}\n\n${targetBody}`;
-        trackRestore(storagePath, message.length);
+        trackRestore(storagePath, sessionId, message.length);
         if (identity.points_to_canonical) {
           touchLastProject(derivProjectFromCanonical(identity.points_to_canonical));
         }
@@ -92,7 +163,7 @@ export function restoreContext(options: RestoreOptions): HookOutput {
     // 1c. Hard staleness block
     const ageHours = getAgeHours(contextPath);
     if (ageHours !== null && ageHours >= STALENESS_HARD_BLOCK_HOURS) {
-      trackRestore(storagePath, 0);
+      trackRestore(storagePath, sessionId, 0);
       return { systemMessage: buildHardStalenessMessage(contextPath, ageHours) };
     }
 
@@ -107,13 +178,13 @@ export function restoreContext(options: RestoreOptions): HookOutput {
 
     const prefixes = [mismatchWarning, softWarning].filter(Boolean).join('\n\n');
     const message = prefixes ? `${prefixes}\n\n${bodyWithoutIdentity}` : bodyWithoutIdentity;
-    trackRestore(storagePath, message.length);
+    trackRestore(storagePath, sessionId, message.length);
     touchLastProject(options.cwd);
     return { systemMessage: message };
   }
 
-  if (rawContextMd) {
-    trackBoilerplateCaught(storagePath);
+  if (rawContextMd && !isGeneratedIndex(rawContextMd)) {
+    trackBoilerplateCaught(storagePath, sessionId);
   }
 
   // Fallback: LATEST.md
@@ -121,7 +192,7 @@ export function restoreContext(options: RestoreOptions): HookOutput {
   const latestMd = readLatestMd(storagePath);
   if (latestMd) {
     const message = buildFallbackRestoration(latestMd, snapshotCount);
-    trackRestore(storagePath, message.length);
+    trackRestore(storagePath, sessionId, message.length);
     touchLastProject(options.cwd);
     return { systemMessage: message };
   }
@@ -140,21 +211,71 @@ function derivProjectFromCanonical(canonicalPath: string): string {
   return idx > 0 ? canonicalPath.slice(0, idx) : canonicalPath;
 }
 
+/**
+ * A4: inject the predecessor's handoff with a C5 header naming session, pane,
+ * path and sealed sha256. A changed or missing file is called out; the C5
+ * verify line tells the agent to stop in that case.
+ */
+function buildLineageRestoration(key: string, record: LineageRecord): string {
+  // Same staleness policy as the legacy file, measured from the seal time.
+  const sealedMs = Date.parse(record.sealed_at);
+  const ageHours = Number.isFinite(sealedMs) ? Math.round((Date.now() - sealedMs) / (1000 * 60 * 60)) : null;
+  if (ageHours !== null && ageHours >= STALENESS_HARD_BLOCK_HOURS) {
+    return buildHardStalenessMessage(record.handoff_path, ageHours);
+  }
+  const lines = [
+    `[Bookmark: resuming the handoff linked to ${key}]`,
+    ...(ageHours !== null && ageHours >= STALENESS_SOFT_WARN_HOURS
+      ? [`[Note: This handoff was sealed ${ageHours}h ago and may be outdated.]`]
+      : []),
+    `Session: ${record.session_id}`,
+    `Pane: ${record.pane ?? 'none'}`,
+    `Path: ${record.handoff_path}`,
+    `sha256: ${record.sha256}`,
+    `Sealed: ${record.sealed_at}${record.head ? ` at HEAD ${record.head}` : ''}`,
+  ];
+  return buildVerifiedRestoration(lines, record.handoff_path, record.sha256);
+}
+
+/**
+ * C5 header + body. A missing, unreadable or changed file is called out; the
+ * verify line tells the agent to stop in that case. The body is still shown.
+ */
+function buildVerifiedRestoration(headerLines: string[], path: string, expectedSha: string): string {
+  const lines = [...headerLines];
+  let body: string | null = null;
+  if (!existsSync(path)) {
+    lines.push('WARNING: the handoff file is missing.');
+  } else {
+    try {
+      const actual = sha256File(path);
+      if (actual !== expectedSha) {
+        lines.push(`WARNING: the file's current sha256 is ${actual}, not the sealed ${expectedSha}. It changed after sealing.`);
+      }
+      body = readFileSync(path, 'utf-8');
+    } catch {
+      lines.push('WARNING: the handoff file could not be read.');
+    }
+  }
+  lines.push(verifyLine(path, expectedSha));
+  return body === null ? lines.join('\n') : `${lines.join('\n')}\n\n${body}`;
+}
+
 /** Record a successful restore — chars injected / 4 ≈ tokens */
-function trackRestore(storagePath: string, charCount: number): void {
+function trackRestore(storagePath: string, sessionId: string | undefined, charCount: number): void {
   try {
-    const state = loadState(storagePath);
+    const state = loadSessionState(storagePath, sessionId);
     state.restores_performed = (state.restores_performed ?? 0) + 1;
     state.tokens_injected = (state.tokens_injected ?? 0) + Math.round(charCount / 4);
-    saveState(storagePath, state);
+    saveSessionState(storagePath, sessionId, state);
   } catch { /* never break restore for tracking */ }
 }
 
-function trackBoilerplateCaught(storagePath: string): void {
+function trackBoilerplateCaught(storagePath: string, sessionId: string | undefined): void {
   try {
-    const state = loadState(storagePath);
+    const state = loadSessionState(storagePath, sessionId);
     state.boilerplate_caught = (state.boilerplate_caught ?? 0) + 1;
-    saveState(storagePath, state);
+    saveSessionState(storagePath, sessionId, state);
   } catch { /* never break restore for tracking */ }
 }
 
@@ -222,19 +343,22 @@ function buildFallbackRestoration(latestMd: string, snapshotCount: number): stri
 
 function handleSessionTransition(
   storagePath: string,
-  state: BookmarkState,
   options: RestoreOptions,
   thresholds: number[]
 ): void {
   const source = options.source ?? 'startup';
   const sessionId = options.sessionId ?? `session_${Date.now()}`;
+  const state = loadSessionState(storagePath, options.sessionId);
 
   let updatedState: BookmarkState;
 
   switch (source) {
     case 'startup':
     case 'clear':
-      updatedState = resetForNewSession(state, sessionId, thresholds);
+      // A per-session state seeded for this id is already fresh.
+      updatedState = state.session_id === sessionId
+        ? { ...state, current_threshold: thresholds[0], last_event_time: Date.now() }
+        : resetForNewSession(state, sessionId, thresholds);
       break;
 
     case 'compact':
@@ -251,5 +375,5 @@ function handleSessionTransition(
   }
 
   if (!existsSync(storagePath)) return;
-  saveState(storagePath, updatedState);
+  saveSessionState(storagePath, options.sessionId, updatedState);
 }

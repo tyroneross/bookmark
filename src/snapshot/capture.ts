@@ -4,7 +4,7 @@ import { extractFilesAndTools } from '../transcript/extractor.js';
 import { storeSnapshot, writeLatestMd, loadLatestSnapshot, getSnapshotsDir, generateSnapshotId } from './storage.js';
 import { compressToMarkdown } from './compress.js';
 import { writeTrails } from '../trails/writer.js';
-import { loadState, saveState, updateSnapshotTime, incrementSnapshotCount } from '../threshold/state.js';
+import { loadSessionState, saveSessionState, updateSnapshotTime, incrementSnapshotCount } from '../threshold/state.js';
 import { loadConfig, getStoragePath } from '../config.js';
 import { appendToRegistry } from '../registry.js';
 import type { Snapshot, SnapshotTrigger } from '../types.js';
@@ -35,7 +35,7 @@ export interface CaptureOptions {
 export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot> {
   const config = loadConfig(options.cwd);
   const storagePath = getStoragePath(options.cwd, config);
-  const state = loadState(storagePath);
+  const state = loadSessionState(storagePath, options.sessionId);
 
   // 1. Parse transcript
   const { entries } = parseTranscript(options.transcriptPath);
@@ -85,7 +85,7 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
   // 6. Update state + increment snapshot counter
   const updatedState = updateSnapshotTime(state);
   const finalState = incrementSnapshotCount(updatedState);
-  saveState(storagePath, finalState);
+  saveSessionState(storagePath, options.sessionId, finalState);
 
   return snapshot;
 }

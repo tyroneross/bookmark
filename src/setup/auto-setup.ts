@@ -398,8 +398,7 @@ function injectGlobalClaudeMd(): boolean {
 
   content += `${marker}
 
-Session continuity via hooks. Context auto-restored on session start from \`.bookmark/bookmark.context.md\`.
-On stop, write a brief summary (task, progress, decisions, files) to \`.bookmark/bookmark.context.md\` when prompted.
+Session continuity via hooks. Each session writes its own handoff to the path the prompt names (\`.bookmark/sessions/<session id>/handoff.md\`); session start restores the handoff linked to this pane or process.
 File changes tracked automatically in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
 `;
 
@@ -442,7 +441,7 @@ function injectClaudeMd(cwd: string): boolean {
   // Minimal injection — hooks handle behavior, this just documents commands
   content += `${marker}
 
-Session continuity via hooks. Context auto-restored on session start from \`.bookmark/bookmark.context.md\`.
+Session continuity via hooks. Each session writes its own handoff to the path the prompt names (\`.bookmark/sessions/<session id>/handoff.md\`); session start restores the handoff linked to this pane or process.
 File changes tracked in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
 `;
 

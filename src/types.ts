@@ -193,6 +193,9 @@ export interface BookmarkConfig {
   contextLimitTokens?: number;
 
   verboseLogging: boolean;
+
+  /** `handoff.enabled: false` turns off threshold handoff prompts and the Stop block. */
+  handoff?: { enabled?: boolean };
 }
 
 // ─── Setup Types ───

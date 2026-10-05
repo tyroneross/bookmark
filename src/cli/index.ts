@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
@@ -11,7 +11,13 @@ import { loadSnapshot, listSnapshots, readLatestMd, getSnapshotCount, ensureStor
 import { compressToMarkdown } from '../snapshot/compress.js';
 import { readContextMd } from '../trails/reader.js';
 import { restoreContext } from '../restore/index.js';
-import { loadState, saveState } from '../threshold/state.js';
+import {
+  loadLatestSessionState,
+  loadSessionState,
+  loadState,
+  saveSessionState,
+  saveState,
+} from '../threshold/state.js';
 import { checkTimeInterval } from '../threshold/time-based.js';
 import {
   handledThresholdsForUsage,
@@ -19,7 +25,18 @@ import {
   readLatestContextUsage,
 } from '../threshold/token-usage.js';
 import { buildHandoffPrompt } from '../context/handoff-prompt.js';
-import { isContextMdFresh } from '../context/freshness.js';
+import { writeFileAtomic } from '../util/atomic-write.js';
+import { currentClaudePid, currentPaneId, getSessionHandoffPath, lineageKey } from '../handoff/paths.js';
+import { isEasyTerminalDriving, isHandoffEnabled } from '../handoff/toggle.js';
+import {
+  buildKickoff,
+  findLineageBySession,
+  listLineage,
+  readLineage,
+  sealHandoff,
+  verifyHandoff,
+} from '../handoff/lineage.js';
+import { decideStop, sealIfChanged } from '../handoff/stop.js';
 import { loadConfig, getStoragePath, writeConfig } from '../config.js';
 import { configureHooks } from '../setup/configure-hooks.js';
 import { ensureProjectBootstrapped, setupProject } from '../setup/auto-setup.js';
@@ -122,7 +139,8 @@ program
       const transcriptPath = opts.transcript ?? hookInput?.transcript_path;
       const config = loadConfig(cwd);
       const storagePath = getStoragePath(cwd, config);
-      const state = loadState(storagePath);
+      const sessionId = hookInput?.session_id;
+      const state = loadSessionState(storagePath, sessionId);
 
       let shouldCapture = false;
       let reason = '';
@@ -148,7 +166,7 @@ program
       }
 
       // Update event time regardless
-      saveState(storagePath, { ...state, last_event_time: Date.now() });
+      saveSessionState(storagePath, sessionId, { ...loadSessionState(storagePath, sessionId), last_event_time: Date.now() });
     } catch {
       // Silent — never break user prompt flow
     }
@@ -162,22 +180,31 @@ program
   .action(async (opts) => {
     try {
       const hookInput = await readHookInput();
-      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
-      ensureProjectBootstrapped(cwd);
+      const sessionId = hookInput?.session_id;
       const transcriptPath = opts.transcript ?? hookInput?.transcript_path;
-      if (!transcriptPath) {
+      // Without a session id nothing can be attributed to a session: write nothing.
+      if (!sessionId || !transcriptPath) {
         console.log(JSON.stringify({}));
         return;
       }
+      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      ensureProjectBootstrapped(cwd);
 
       const config = loadConfig(cwd);
       const storagePath = getStoragePath(cwd, config);
-      const state = loadState(storagePath);
+      const paneId = currentPaneId();
+      const pid = currentClaudePid();
+      // A7 toggle; C7: Easy Terminal owns this pane's handoff, so bookmark stands down.
+      const handoffPrompts = isHandoffEnabled(config) && !isEasyTerminalDriving();
+      // Seal this session's handoff whenever it changed and passes the checks (A3/R4).
+      try { sealIfChanged({ storagePath, cwd, sessionId, paneId, pid }); } catch { /* best-effort */ }
+      const state = loadSessionState(storagePath, sessionId);
       const timeCheck = checkTimeInterval(state);
       const observation = readLatestContextUsage(
         transcriptPath,
         config.contextLimitTokens,
-        hookInput?.prompt
+        hookInput?.prompt,
+        sessionId
       );
 
       if (!observation) {
@@ -213,8 +240,8 @@ program
             cwd,
             sessionId: hookInput?.session_id,
           });
-          const refreshedState = loadState(storagePath);
-          saveState(storagePath, {
+          const refreshedState = loadSessionState(storagePath, sessionId);
+          saveSessionState(storagePath, sessionId, {
             ...refreshedState,
             last_event_time: observedState.last_event_time,
             latest_model: observedState.latest_model,
@@ -225,7 +252,7 @@ program
             unknown_context_limit_notified_model: observedState.unknown_context_limit_notified_model,
           });
         } else {
-          saveState(storagePath, observedState);
+          saveSessionState(storagePath, sessionId, observedState);
         }
 
         if (shouldNotify) {
@@ -274,8 +301,8 @@ program
             cwd,
             sessionId: hookInput?.session_id,
           });
-          const refreshedState = loadState(storagePath);
-          saveState(storagePath, {
+          const refreshedState = loadSessionState(storagePath, sessionId);
+          saveSessionState(storagePath, sessionId, {
             ...refreshedState,
             last_event_time: observedState.last_event_time,
             latest_model: observedState.latest_model,
@@ -287,7 +314,7 @@ program
             token_thresholds_triggered: observedState.token_thresholds_triggered,
           });
         } else {
-          saveState(storagePath, observedState);
+          saveSessionState(storagePath, sessionId, observedState);
         }
         console.log(JSON.stringify({}));
         return;
@@ -301,8 +328,8 @@ program
         contextUsage: usage,
       });
 
-      const refreshedState = loadState(storagePath);
-      saveState(storagePath, {
+      const refreshedState = loadSessionState(storagePath, sessionId);
+      saveSessionState(storagePath, sessionId, {
         ...refreshedState,
         latest_model: usage.model,
         latest_context_tokens: usage.usedTokens,
@@ -315,11 +342,23 @@ program
         ],
       });
 
+      // A7/C7: the snapshot above is still captured but no prompt is injected.
+      if (!handoffPrompts) {
+        console.log(JSON.stringify({}));
+        return;
+      }
+
       const threshold = crossed[crossed.length - 1];
       const thresholdPct = Math.round(threshold * 100);
       const usedPct = Math.round(usage.usedFraction * 100);
       const reason = `Context usage crossed ${thresholdPct}% (${usedPct}% observed; snapshot ${snapshot.snapshot_id}).`;
-      const handoffPrompt = buildHandoffPrompt({ cwd, reason });
+      const handoffPrompt = buildHandoffPrompt({
+        cwd,
+        reason,
+        handoffPath: getSessionHandoffPath(storagePath, sessionId),
+        sessionId,
+        paneId,
+      });
 
       console.log(JSON.stringify({
         systemMessage:
@@ -339,11 +378,17 @@ program
 
 program
   .command('stop')
-  .description('Stop hook — capture files, conditionally block for bookmark.context.md (for Stop hook)')
+  .description('Stop hook — capture files, conditionally block for the session handoff (for Stop hook)')
   .option('--cwd <path>', 'Working directory')
   .action(async (opts) => {
     try {
       const hookInput = await readHookInput();
+      const sessionId = hookInput?.session_id;
+      // Without a session id there is no per-session handoff to ask for: approve, write nothing.
+      if (!sessionId) {
+        console.log(JSON.stringify({ decision: 'approve' }));
+        return;
+      }
       const cwd = opts.cwd ?? hookInput?.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
       ensureProjectBootstrapped(cwd);
 
@@ -355,7 +400,7 @@ program
             trigger: 'session_end',
             transcriptPath,
             cwd,
-            sessionId: hookInput?.session_id ?? process.env.CLAUDE_SESSION_ID,
+            sessionId,
           });
         } catch { /* file tracking is best-effort */ }
       }
@@ -365,36 +410,34 @@ program
 
       const config = loadConfig(cwd);
       const storagePath = getStoragePath(cwd, config);
-      const contextPath = join(storagePath, 'bookmark.context.md');
-      const markerPath = join(storagePath, '.stop-requested');
+      const paneId = currentPaneId();
 
-      // Quality gate: check if bookmark.context.md has real content
-      if (isContextMdFresh(contextPath, markerPath)) {
-        console.log(JSON.stringify({ decision: 'approve' }));
-        return;
-      }
-
-      // Check .stop-requested marker — max 1 block to prevent loops
-      if (existsSync(markerPath)) {
-        // Already blocked once — approve to prevent infinite loop
-        console.log(JSON.stringify({ decision: 'approve' }));
-        return;
-      }
-
-      // First time — write JSON marker, track the block, and block
-      const marker = JSON.stringify({
-        timestamp: Date.now(),
-        session_id: hookInput?.session_id ?? process.env.CLAUDE_SESSION_ID ?? 'unknown',
+      // Per-session handoff, seal and once-per-session block (A6/A7).
+      const decision = decideStop({
+        storagePath,
+        cwd,
+        sessionId,
+        paneId,
+        pid: currentClaudePid(),
+        enabled: isHandoffEnabled(config),
+        easyTerminalDriving: isEasyTerminalDriving(),
       });
-      writeFileSync(markerPath, marker, 'utf-8');
+      if (decision.decision === 'approve') {
+        console.log(JSON.stringify({ decision: 'approve' }));
+        return;
+      }
+
       try {
-        const st = loadState(storagePath);
+        const st = loadSessionState(storagePath, sessionId);
         st.quality_blocks = (st.quality_blocks ?? 0) + 1;
-        saveState(storagePath, st);
+        saveSessionState(storagePath, sessionId, st);
       } catch { /* tracking is best-effort */ }
       const handoffPrompt = buildHandoffPrompt({
         cwd,
         reason: 'The session is stopping and needs a durable handoff.',
+        handoffPath: decision.handoffPath,
+        sessionId,
+        paneId,
       });
       console.log(JSON.stringify({
         decision: 'block',
@@ -455,7 +498,7 @@ program
     const cwd = opts.cwd ?? process.cwd();
     const config = loadConfig(cwd);
     const storagePath = getStoragePath(cwd, config);
-    const state = loadState(storagePath);
+    const state = loadLatestSessionState(storagePath);
     const count = getSnapshotCount(storagePath);
     const entries = listSnapshots(storagePath, 5);
 
@@ -500,7 +543,7 @@ program
         console.log(`  Tokens injected:    ~${tokensInjected}`);
       }
       if (blocks > 0) {
-        console.log(`  Quality blocks:     ${blocks} (asked Claude to write bookmark.context.md)`);
+        console.log(`  Quality blocks:     ${blocks} (asked Claude to write the session handoff)`);
       }
       if (caught > 0) {
         console.log(`  Boilerplate caught: ${caught} (skipped stale restore)`);
@@ -725,7 +768,7 @@ program
         'will follow the pointer above and restore the canonical context.*',
       ].join('\n');
 
-      writeFileSync(join(homeDir, 'bookmark.context.md'), pointerBody, 'utf-8');
+      writeFileAtomic(join(homeDir, 'bookmark.context.md'), pointerBody);
       console.error(`[bookmark] Home pointer → ${targetName} (${canonicalPath})`);
     }
 
@@ -813,6 +856,8 @@ program
     console.log('  BOOKMARK_INTERVAL, BOOKMARK_TOKEN_THRESHOLD, BOOKMARK_CONTEXT_LIMIT');
     console.log('  BOOKMARK_STORAGE_PATH');
     console.log('  BOOKMARK_VERBOSE');
+    console.log('  BOOKMARK_HANDOFF=off (also: config handoff.enabled=false, Easy Terminal settings/context-handoff.json)');
+    console.log(`  Handoff prompts:    ${isHandoffEnabled(config) ? 'on' : 'off'}`);
     console.log('');
   });
 
@@ -850,6 +895,114 @@ program
       const config = loadConfig(cwd);
       console.log(`  3. rm -rf ${join(cwd, config.storagePath)}`);
     }
+  });
+
+// ─── Per-session handoff (A8) ───
+
+const handoffCommand = program
+  .command('handoff')
+  .description('Per-session handoffs: list, seal, verify, kickoff');
+
+handoffCommand
+  .command('list')
+  .description('List sealed handoffs (newest first)')
+  .option('--json', 'Print JSON')
+  .option('--cwd <path>', 'Working directory')
+  .action((opts) => {
+    const cwd = opts.cwd ?? process.cwd();
+    const storagePath = getStoragePath(cwd, loadConfig(cwd));
+    const records = listLineage(storagePath);
+    if (opts.json) {
+      console.log(JSON.stringify(records, null, 2));
+      return;
+    }
+    if (records.length === 0) {
+      console.log('No sealed handoffs.');
+      return;
+    }
+    for (const record of records) {
+      console.log(`${record.sealed_at}  ${record.key}  session ${record.session_id}  sha256 ${record.sha256}`);
+      console.log(`  ${record.handoff_path}`);
+    }
+  });
+
+handoffCommand
+  .command('seal')
+  .description("Hash a session's handoff.md and point its lineage key at it")
+  .option('--session <id>', 'Session id (default: CLAUDE_SESSION_ID)')
+  .option('--pane <id>', 'Pane id (default: EASY_TERMINAL_PANE_ID)')
+  .option('--pid <pid>', 'Claude process id (default: CLAUDE_PID)')
+  .option('--cwd <path>', 'Working directory')
+  .action((opts) => {
+    const cwd = opts.cwd ?? process.cwd();
+    const sessionId = opts.session ?? process.env.CLAUDE_SESSION_ID;
+    if (!sessionId) {
+      console.error('Pass --session <id> (no CLAUDE_SESSION_ID in the environment).');
+      process.exitCode = 2;
+      return;
+    }
+    const storagePath = getStoragePath(cwd, loadConfig(cwd));
+    const record = sealHandoff({
+      storagePath,
+      cwd,
+      sessionId,
+      paneId: opts.pane ?? currentPaneId(),
+      pid: opts.pid ?? currentClaudePid(),
+    });
+    if (!record) {
+      console.error(`No handoff at ${getSessionHandoffPath(storagePath, sessionId)}.`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(JSON.stringify(record, null, 2));
+  });
+
+handoffCommand
+  .command('verify')
+  .description('Check a handoff file against its sha256 (exit 0 match, 1 differs or missing)')
+  .requiredOption('--path <path>', 'Handoff file')
+  .requiredOption('--sha <hex>', 'Expected sha256')
+  .action((opts) => {
+    const result = verifyHandoff(opts.path, opts.sha);
+    if (result.ok) {
+      console.log(`ok ${result.actual}`);
+      return;
+    }
+    console.error(result.reason === 'missing'
+      ? `missing: ${opts.path}`
+      : `mismatch: expected ${opts.sha}, got ${result.actual}`);
+    process.exitCode = 1;
+  });
+
+handoffCommand
+  .command('kickoff')
+  .description('Print the verified kickoff text for the handoff linked to a pane or session')
+  .option('--pane <id>', 'Pane id (default: EASY_TERMINAL_PANE_ID)')
+  .option('--pid <pid>', 'Claude process id (default: CLAUDE_PID)')
+  .option('--session <id>', 'Find the handoff sealed by this session id, under any key')
+  .option('--cwd <path>', 'Working directory')
+  .action((opts) => {
+    const cwd = opts.cwd ?? process.cwd();
+    const storagePath = getStoragePath(cwd, loadConfig(cwd));
+    let label: string;
+    let record;
+    if (opts.session) {
+      label = `session ${opts.session}`;
+      record = findLineageBySession(storagePath, opts.session);
+    } else {
+      const key = lineageKey({
+        paneId: opts.pane ?? currentPaneId(),
+        pid: opts.pid ?? currentClaudePid(),
+      });
+      label = key ?? 'this pane/process (pass --pane with --pid, --pid, or --session)';
+      record = key ? readLineage(storagePath, key) : null;
+    }
+    if (!record) {
+      console.error(`No handoff is linked to ${label}.`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(buildKickoff(record));
   });
 
 // ─── Helpers ───
@@ -902,7 +1055,7 @@ function updateHomePointer(cwd: string): void {
       '',
     ].join('\n');
 
-    writeFileSync(join(homeBookmarkDir, 'bookmark.context.md'), pointerContent, 'utf-8');
+    writeFileAtomic(join(homeBookmarkDir, 'bookmark.context.md'), pointerContent);
   } catch {
     // Never propagate — pointer update is best-effort
   }
