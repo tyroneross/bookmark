@@ -45,12 +45,20 @@ import { findById, pruneStale, getLastProject, loadRegistry } from '../registry.
 import { parseIdentity } from '../trails/identity.js';
 import type { HookInput, SnapshotTrigger } from '../types.js';
 
+// Read the version from package.json so a release bump cannot drift from the
+// string the CLI reports. v0.2.0 shipped reporting '0.1.0' because this was
+// hardcoded and the release bump missed it — which makes version drift
+// invisible to `--version`, the one command meant to reveal it.
+const pkgVersion: string = JSON.parse(
+  readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../../package.json'), 'utf-8'),
+).version;
+
 const program = new Command();
 
 program
   .name('bookmark')
   .description('Context snapshots for Claude Code — session continuity across compactions and terminals')
-  .version('0.3.2');
+  .version(pkgVersion);
 
 // ─── Hook Commands (invoked by hooks, not users) ───
 

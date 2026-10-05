@@ -5,8 +5,7 @@
     "url": "https://github.com/tyroneross"
   },
   "metadata": {
-    "description": "Official marketplace for bookmark — session context continuity",
-    "version": "0.3.3"
+    "description": "Official marketplace for bookmark — session context continuity"
   },
   "plugins": [
     {
