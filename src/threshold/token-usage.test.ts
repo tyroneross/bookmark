@@ -88,6 +88,32 @@ describe('readLatestContextUsage', () => {
     });
   });
 
+  it('measures Codex rollouts from the latest token_count and its own context window', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'bookmark-token-'));
+    tempDirs.push(dir);
+    const transcript = join(dir, 'rollout.jsonl');
+    const tokenCount = (input: number, output: number) => JSON.stringify({
+      type: 'event_msg',
+      payload: { type: 'token_count', info: {
+        last_token_usage: { input_tokens: input, cached_input_tokens: input - 1000, output_tokens: output },
+        model_context_window: 400_000,
+      } },
+    });
+    writeFileSync(transcript, [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'x' } }),
+      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-6.1' } }),
+      tokenCount(100_000, 1_000),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant' } }),
+      tokenCount(299_000, 1_000),
+      '',
+    ].join('\n'));
+
+    const usage = readLatestContextUsage(transcript);
+    expect(usage).toMatchObject({ status: 'measured', model: 'gpt-6.1', usedTokens: 300_000, contextLimitTokens: 400_000 });
+    expect(usage?.status === 'measured' && usage.usedFraction).toBe(0.75);
+    expect(readLatestContextUsage(transcript, 600_000)).toMatchObject({ contextLimitTokens: 600_000 });
+  });
+
   it('returns null when the transcript has no measured usage', () => {
     const dir = mkdtempSync(join(tmpdir(), 'bookmark-token-'));
     tempDirs.push(dir);

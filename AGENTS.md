@@ -214,7 +214,7 @@ Tiered access pattern: load `LATEST.md` and `bookmark.context.md` always, use `i
 
 ## Token Thresholds
 
-`src/threshold/token-usage.ts` reads the latest model ID and usage record from the transcript tail. Input, cache-read, cache-write, output, and pending-prompt tokens count toward the context window. The default new-session threshold is 75% used. `src/threshold/state.ts` records which thresholds fired; a new session clears them immediately, while compaction re-arms them after a lower post-compaction usage record appears. This suppresses alerts from a stale pre-compaction record.
+`src/threshold/token-usage.ts` reads the latest model ID and usage record from the transcript tail. For Codex rollouts it reads the newest `event_msg` `token_count` payload: `info.last_token_usage` input + output tokens against `info.model_context_window` (the window Codex reports for the active model), with the model name from the latest `turn_context`. `BOOKMARK_CONTEXT_LIMIT` still overrides. Input, cache-read, cache-write, output, and pending-prompt tokens count toward the context window. The default new-session threshold is 75% used. `src/threshold/state.ts` records which thresholds fired; a new session clears them immediately, while compaction re-arms them after a lower post-compaction usage record appears. This suppresses alerts from a stale pre-compaction record.
 
 Default state: `tokenThresholds: [0.75]`, `snapshot_interval_minutes: 5`. Bookmark resolves only documented model limits. An unknown model pauses token-threshold capture and prompts the user to set `BOOKMARK_CONTEXT_LIMIT` or the project `contextLimitTokens`; manual and periodic snapshots continue.
 

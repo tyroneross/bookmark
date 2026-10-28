@@ -116,7 +116,10 @@ At 75% used, Bookmark captures a `token_threshold` snapshot, shows a warning, as
 refresh `bookmark.context.md`, and recommends a new session. It alerts once until a new session
 or lower post-compaction usage re-arms the threshold.
 
-Bookmark resolves context limits only for model IDs documented by Anthropic. If the transcript
+Codex sessions are measured from the rollout file: the latest `token_count` event gives the tokens
+used and the context window Codex reports for the active model, so no lookup table is needed.
+
+For Claude Code transcripts, Bookmark resolves context limits only for model IDs documented by Anthropic. If the transcript
 reports an unknown model, Bookmark pauses token-threshold capture, asks the user for the verified
 limit, and keeps manual and periodic snapshots active. It never guesses a context limit. The
 mapping follows Anthropic's

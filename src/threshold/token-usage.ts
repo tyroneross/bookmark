@@ -87,12 +87,32 @@ export function readLatestContextUsage(
     }
 
     const lines = text.split('\n');
+    // Codex rollouts: the newest token_count event carries usage and the
+    // model's own context window; turn_context records carry the model name.
+    let codexUsage: ContextUsageObservation | null = null;
+    let sawCodexTokenCount = false;
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const line = lines[index].trim();
       if (!line) continue;
 
       try {
         const record = JSON.parse(line) as Record<string, unknown>;
+        if (record.type === 'event_msg' || record.type === 'turn_context') {
+          const payload = isRecord(record.payload) ? record.payload : null;
+          if (!payload) continue;
+          if (record.type === 'turn_context' && codexUsage && typeof payload.model === 'string') {
+            return { ...codexUsage, model: payload.model };
+          }
+          if (record.type === 'event_msg' && payload.type === 'token_count' && !sawCodexTokenCount) {
+            const observed = readCodexTokenCount(payload, contextLimitOverride, pendingPrompt);
+            if (observed) {
+              sawCodexTokenCount = true;
+              codexUsage = observed;
+            }
+          }
+          continue;
+        }
+        if (codexUsage) continue;
         if (typeof record.type === 'string' && record.type !== 'assistant') continue;
         if (sessionId && typeof record.sessionId === 'string' && record.sessionId !== sessionId) continue;
         const message = isRecord(record.message) ? record.message : record;
@@ -134,6 +154,7 @@ export function readLatestContextUsage(
         // Skip malformed or partial JSONL lines.
       }
     }
+    if (codexUsage) return codexUsage;
   } catch {
     return null;
   } finally {
@@ -141,6 +162,42 @@ export function readLatestContextUsage(
   }
 
   return null;
+}
+
+/**
+ * Codex `token_count` payload: info.last_token_usage is the latest request,
+ * whose input_tokens already include cached input; info.model_context_window
+ * is the window Codex itself uses for the active model.
+ */
+function readCodexTokenCount(
+  payload: Record<string, unknown>,
+  contextLimitOverride: number | undefined,
+  pendingPrompt: string
+): ContextUsageObservation | null {
+  const info = isRecord(payload.info) ? payload.info : null;
+  const last = info && isRecord(info.last_token_usage) ? info.last_token_usage : null;
+  if (!info || !last) return null;
+  const promptEstimate = pendingPrompt ? Math.ceil(Buffer.byteLength(pendingPrompt, 'utf8') / 4) : 0;
+  const usedTokens = tokenCount(last.input_tokens) + tokenCount(last.output_tokens) + promptEstimate;
+  if (usedTokens <= 0) return null;
+  const model = 'codex';
+  const window = tokenCount(info.model_context_window);
+  const contextLimitTokens = contextLimitOverride && Number.isFinite(contextLimitOverride) && contextLimitOverride > 0
+    ? contextLimitOverride
+    : window > 0 ? window : null;
+  if (contextLimitTokens === null) {
+    return { status: 'unknown_context_limit', model, usedTokens, source: 'transcript_usage' };
+  }
+  const usedFraction = Math.min(usedTokens / contextLimitTokens, 1);
+  return {
+    status: 'measured',
+    model,
+    usedTokens,
+    contextLimitTokens,
+    usedFraction,
+    remainingFraction: Math.max(0, 1 - usedFraction),
+    source: 'transcript_usage',
+  };
 }
 
 export function newlyCrossedThresholds(
