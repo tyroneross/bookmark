@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { isContextMdFresh, passesHandoffChecks } from '../context/freshness.js';
 import { writeFileAtomic } from '../util/atomic-write.js';
+import type { StopMode } from '../types.js';
 import {
   getSessionHandoffPath,
   getSessionStopMarkerPath,
@@ -16,6 +17,9 @@ import {
 
 /** A sealed handoff younger than this, at the same HEAD, lets Stop approve without blocking. */
 export const SEALED_HANDOFF_MAX_AGE_MS = 10 * 60 * 1000;
+
+/** Default usage fraction at which Stop may block; matches the default token threshold. */
+export const DEFAULT_STOP_THRESHOLD = 0.75;
 
 export interface SessionHandoffContext {
   storagePath: string;
@@ -59,19 +63,39 @@ export function sealIfChanged(context: SessionHandoffContext): LineageRecord | n
 export type StopDecision =
   | {
       decision: 'approve';
-      why: 'disabled' | 'easy_terminal_owns_pane' | 'fresh_handoff' | 'sealed_recently' | 'already_blocked';
+      why:
+        | 'disabled'
+        | 'easy_terminal_owns_pane'
+        | 'below_threshold'
+        | 'fresh_handoff'
+        | 'sealed_recently'
+        | 'already_blocked';
       record?: LineageRecord;
     }
   | { decision: 'block'; handoffPath: string };
 
 /**
- * A6: seal any changed handoff, then approve when the handoff is fresh or its
- * seal is under 10 minutes old at the same HEAD. Otherwise block at most once
- * per session, tracked by the per-session stop-requested marker. A7/C7: no
- * block when handoff is off or Easy Terminal owns this pane.
+ * Claude Code fires Stop at the end of EVERY assistant turn, not only at
+ * session exit. So in `threshold` mode (default) Stop blocks only when the
+ * session is at risk of losing context: measured usage at or above
+ * `stopThreshold` AND the handoff is neither fresh nor recently sealed.
+ * Unmeasured usage (null/undefined) counts as below threshold.
+ * `every-turn` mode skips the usage check (pre-0.5.1 behaviour).
+ *
+ * A6: seal any changed handoff first, then block at most once per session,
+ * tracked by the per-session stop-requested marker. A7/C7: no block when
+ * handoff is off or Easy Terminal owns this pane.
  */
 export function decideStop(
-  context: SessionHandoffContext & { enabled: boolean; easyTerminalDriving?: boolean }
+  context: SessionHandoffContext & {
+    enabled: boolean;
+    easyTerminalDriving?: boolean;
+    mode?: StopMode;
+    /** Latest measured context usage, 0..1; null/undefined = not measurable. */
+    contextUsedFraction?: number | null;
+    /** Usage fraction at which Stop may block in threshold mode (default 0.75). */
+    stopThreshold?: number;
+  }
 ): StopDecision {
   let record: LineageRecord | null = null;
   try {
@@ -80,6 +104,14 @@ export function decideStop(
 
   if (!context.enabled) return { decision: 'approve', why: 'disabled' };
   if (context.easyTerminalDriving) return { decision: 'approve', why: 'easy_terminal_owns_pane' };
+
+  if ((context.mode ?? 'threshold') === 'threshold') {
+    const used = context.contextUsedFraction;
+    const threshold = context.stopThreshold ?? DEFAULT_STOP_THRESHOLD;
+    if (typeof used !== 'number' || !Number.isFinite(used) || used < threshold) {
+      return { decision: 'approve', why: 'below_threshold', record: record ?? undefined };
+    }
+  }
 
   const handoffPath = getSessionHandoffPath(context.storagePath, context.sessionId);
   const markerPath = getSessionStopMarkerPath(context.storagePath, context.sessionId);

@@ -38,7 +38,7 @@ import {
   verifyHandoff,
 } from '../handoff/lineage.js';
 import { decideStop, sealIfChanged } from '../handoff/stop.js';
-import { loadConfig, getStoragePath, writeConfig } from '../config.js';
+import { loadConfig, getStoragePath, resolveHookStorage, resolveStopMode, writeConfig } from '../config.js';
 import { configureHooks } from '../setup/configure-hooks.js';
 import { ensureProjectBootstrapped, setupProject } from '../setup/auto-setup.js';
 import { findById, pruneStale, getLastProject, loadRegistry } from '../registry.js';
@@ -399,37 +399,53 @@ program
         return;
       }
       const cwd = opts.cwd ?? hookInput?.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-      ensureProjectBootstrapped(cwd);
+      // Stop fires at the end of every turn and cwd moves with the agent, so
+      // never bootstrap storage here: resolve the repo root (or an existing
+      // .bookmark/ ancestor) and do nothing when there is none or it is $HOME.
+      const storage = resolveHookStorage(cwd);
+      if (!storage || storage.homePointer) {
+        console.log(JSON.stringify({ decision: 'approve' }));
+        return;
+      }
+      const { root, storagePath } = storage;
+      const config = loadConfig(root);
 
-      // Always capture file tracking snapshot
+      // Mechanical file-tracking snapshot on every turn end (best-effort).
       const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(cwd);
       if (transcriptPath) {
         try {
           await captureSnapshot({
             trigger: 'session_end',
             transcriptPath,
-            cwd,
+            cwd: root,
             sessionId,
           });
         } catch { /* file tracking is best-effort */ }
       }
 
       // Update home-scope pointer to track the most recently active project
-      updateHomePointer(cwd);
+      updateHomePointer(root);
 
-      const config = loadConfig(cwd);
-      const storagePath = getStoragePath(cwd, config);
       const paneId = currentPaneId();
+      // Same transcript measurement as context-check; unmeasurable = below threshold.
+      let contextUsedFraction: number | null = null;
+      if (transcriptPath) {
+        const observation = readLatestContextUsage(transcriptPath, config.contextLimitTokens, '', sessionId);
+        if (observation?.status === 'measured') contextUsedFraction = observation.usedFraction;
+      }
 
       // Per-session handoff, seal and once-per-session block (A6/A7).
       const decision = decideStop({
         storagePath,
-        cwd,
+        cwd: root,
         sessionId,
         paneId,
         pid: currentClaudePid(),
         enabled: isHandoffEnabled(config),
         easyTerminalDriving: isEasyTerminalDriving(),
+        mode: resolveStopMode(config),
+        contextUsedFraction,
+        stopThreshold: config.tokenThresholds[0],
       });
       if (decision.decision === 'approve') {
         console.log(JSON.stringify({ decision: 'approve' }));
@@ -442,8 +458,10 @@ program
         saveSessionState(storagePath, sessionId, st);
       } catch { /* tracking is best-effort */ }
       const handoffPrompt = buildHandoffPrompt({
-        cwd,
-        reason: 'The session is stopping and needs a durable handoff.',
+        cwd: root,
+        reason: contextUsedFraction !== null
+          ? `Context usage is at ${Math.round(contextUsedFraction * 100)}% and this session has no fresh handoff.`
+          : 'The session is stopping and needs a durable handoff.',
         handoffPath: decision.handoffPath,
         sessionId,
         paneId,
@@ -451,15 +469,17 @@ program
       console.log(JSON.stringify({
         decision: 'block',
         reason: handoffPrompt,
-        systemMessage: 'Bookmark needs Claude to refresh the session handoff before stopping.',
+        systemMessage: contextUsedFraction !== null
+          ? `Bookmark asked Claude to refresh the session handoff (context at ${Math.round(contextUsedFraction * 100)}%). It asks once per session.`
+          : 'Bookmark asked Claude to refresh the session handoff. It asks once per session.',
       }));
     } catch (err) {
       // Log error for debugging, then approve to never block stop
       try {
-        const config = loadConfig(opts.cwd ?? process.cwd());
-        const storagePath = getStoragePath(opts.cwd ?? process.cwd(), config);
-        const errLog = join(storagePath, '.errors.log');
-        appendFileSync(errLog, `[${new Date().toISOString()}] stop: ${(err as Error).message}\n`);
+        const storage = resolveHookStorage(opts.cwd ?? process.cwd());
+        if (storage && !storage.homePointer && existsSync(storage.storagePath)) {
+          appendFileSync(join(storage.storagePath, '.errors.log'), `[${new Date().toISOString()}] stop: ${(err as Error).message}\n`);
+        }
       } catch { /* truly silent */ }
       console.log(JSON.stringify({ decision: 'approve' }));
     }

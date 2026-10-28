@@ -67,7 +67,7 @@ Defined in `hooks/hooks.json`. All are `command` type, invoking the CLI via `npx
 
 | Hook | Subcommand | Behavior |
 |------|-----------|---------|
-| `Stop` | `stop` | Blocks exit once unless the handoff is under 2 minutes old and contains identity plus all required sections; always approves on retry |
+| `Stop` | `stop` | Fires at every turn end. Snapshots files at the repo root (never bootstraps `.bookmark/` in a subfolder or `$HOME`). Blocks once per session only when transcript usage ≥ the lowest token threshold (default 75%) and the per-session handoff is not fresh; `BOOKMARK_STOP_MODE=every-turn` restores the strict mode |
 | `PreCompact` | `precompact` | Captures a mechanical file/tool checkpoint; Claude Code discards PreCompact messages |
 | `SessionStart` | `restore` | Reads `.bookmark/bookmark.context.md` and injects it as restored context |
 | `UserPromptSubmit` | `context-check` | Measures context usage, handles interval capture, and alerts once at each configured token threshold |

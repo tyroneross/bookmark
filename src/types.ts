@@ -175,6 +175,8 @@ export interface HookOutput {
 
 // ─── Config Types ───
 
+export type StopMode = 'threshold' | 'every-turn';
+
 export interface BookmarkConfig {
   storagePath: string;
   thresholds: number[];
@@ -194,8 +196,13 @@ export interface BookmarkConfig {
 
   verboseLogging: boolean;
 
-  /** `handoff.enabled: false` turns off threshold handoff prompts and the Stop block. */
-  handoff?: { enabled?: boolean };
+  /**
+   * `handoff.enabled: false` turns off threshold handoff prompts and the Stop block.
+   * `handoff.stopMode`: `threshold` (default) blocks Stop only when context usage is at or
+   * above the lowest token threshold; `every-turn` blocks on any turn end without a fresh
+   * handoff (the pre-0.5.1 behaviour). `BOOKMARK_STOP_MODE` overrides it.
+   */
+  handoff?: { enabled?: boolean; stopMode?: StopMode };
 }
 
 // ─── Setup Types ───

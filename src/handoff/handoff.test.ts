@@ -301,7 +301,7 @@ describe('A5 context-check usage filter', () => {
 describe('A6 stop decision', () => {
   it('blocks at most once per session', () => {
     const { cwd, storagePath } = tempRepo();
-    const base = { storagePath, cwd, paneId: 'p', head: 'h1', enabled: true };
+    const base = { storagePath, cwd, paneId: 'p', head: 'h1', enabled: true, contextUsedFraction: 0.9 };
     expect(decideStop({ ...base, sessionId: 's1' })).toMatchObject({ decision: 'block', handoffPath: getSessionHandoffPath(storagePath, 's1') });
     expect(existsSync(getSessionStopMarkerPath(storagePath, 's1'))).toBe(true);
     expect(decideStop({ ...base, sessionId: 's1' })).toMatchObject({ decision: 'approve', why: 'already_blocked' });
@@ -309,10 +309,27 @@ describe('A6 stop decision', () => {
     expect(decideStop({ ...base, sessionId: 's2', paneId: 'q' })).toMatchObject({ decision: 'block' });
   });
 
+  it('threshold mode: approves an ordinary turn end below the threshold or with unmeasured usage, writing no marker', () => {
+    const { cwd, storagePath } = tempRepo();
+    const base = { storagePath, cwd, sessionId: 's1', paneId: 'p', head: 'h1', enabled: true };
+    expect(decideStop({ ...base, contextUsedFraction: 0.4 })).toMatchObject({ decision: 'approve', why: 'below_threshold' });
+    expect(decideStop({ ...base, contextUsedFraction: null })).toMatchObject({ decision: 'approve', why: 'below_threshold' });
+    expect(decideStop(base)).toMatchObject({ decision: 'approve', why: 'below_threshold' });
+    expect(existsSync(getSessionStopMarkerPath(storagePath, 's1'))).toBe(false);
+    expect(decideStop({ ...base, contextUsedFraction: 0.6, stopThreshold: 0.5 })).toMatchObject({ decision: 'block' });
+  });
+
+  it('threshold mode: blocks exactly at the threshold; every-turn mode ignores usage', () => {
+    const { cwd, storagePath } = tempRepo();
+    const base = { storagePath, cwd, paneId: 'p', head: 'h1', enabled: true };
+    expect(decideStop({ ...base, sessionId: 'a', contextUsedFraction: 0.75 })).toMatchObject({ decision: 'block' });
+    expect(decideStop({ ...base, sessionId: 'b', mode: 'every-turn' as const, contextUsedFraction: 0.1 })).toMatchObject({ decision: 'block' });
+  });
+
   it('approves and seals a fresh handoff', () => {
     const { cwd, storagePath } = tempRepo();
     writeHandoff(storagePath, 's1', 'p');
-    const result = decideStop({ storagePath, cwd, sessionId: 's1', paneId: 'p', pid: '1', head: 'h1', enabled: true });
+    const result = decideStop({ storagePath, cwd, sessionId: 's1', paneId: 'p', pid: '1', head: 'h1', enabled: true, contextUsedFraction: 0.9 });
     expect(result).toMatchObject({ decision: 'approve', why: 'fresh_handoff' });
     expect(readLineage(storagePath, 'pane:p:pid:1')?.session_id).toBe('s1');
   });
@@ -323,7 +340,7 @@ describe('A6 stop decision', () => {
     ageFile(path, 5 * 60_000);
     sealHandoff({ storagePath, cwd, sessionId: 's1', paneId: 'p', pid: '1', head: 'h1', now: new Date(Date.now() - 5 * 60_000) });
 
-    const base = { storagePath, cwd, sessionId: 's1', paneId: 'p', pid: '1', enabled: true };
+    const base = { storagePath, cwd, sessionId: 's1', paneId: 'p', pid: '1', enabled: true, contextUsedFraction: 0.9 };
     expect(decideStop({ ...base, head: 'h1' })).toMatchObject({ decision: 'approve', why: 'sealed_recently' });
     expect(decideStop({ ...base, head: 'h2' })).toMatchObject({ decision: 'block' });
   });
@@ -333,7 +350,7 @@ describe('A6 stop decision', () => {
     const path = writeHandoff(storagePath, 's1', 'p');
     ageFile(path, 11 * 60_000);
     sealHandoff({ storagePath, cwd, sessionId: 's1', paneId: 'p', pid: '1', head: 'h1', now: new Date(Date.now() - 11 * 60_000) });
-    expect(decideStop({ storagePath, cwd, sessionId: 's1', paneId: 'p', pid: '1', head: 'h1', enabled: true }))
+    expect(decideStop({ storagePath, cwd, sessionId: 's1', paneId: 'p', pid: '1', head: 'h1', enabled: true, contextUsedFraction: 0.9 }))
       .toMatchObject({ decision: 'block' });
   });
 });

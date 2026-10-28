@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, statSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { homedir } from 'node:os';
-import type { BookmarkConfig, SetupPreferences } from './types.js';
+import type { BookmarkConfig, SetupPreferences, StopMode } from './types.js';
+import { parseIdentity } from './trails/identity.js';
 
 const DEFAULTS: BookmarkConfig = {
   storagePath: '.bookmark',
@@ -220,4 +221,65 @@ export function writeConfig(cwd: string, prefs: SetupPreferences): void {
   if (prefs.contextLimitTokens !== undefined) merged.contextLimitTokens = prefs.contextLimitTokens;
 
   writeFileSync(configPath, JSON.stringify(merged, null, 2), 'utf-8');
+}
+
+/** Nearest ancestor of `cwd` (inclusive) containing `.git` (a dir, or a worktree's file). */
+export function findGitRoot(cwd: string): string | null {
+  let dir = cwd;
+  while (dir && dir !== dirname(dir)) {
+    if (existsSync(join(dir, '.git'))) return dir;
+    dir = dirname(dir);
+  }
+  return null;
+}
+
+/** Nearest ancestor of `cwd` (inclusive) that already has a `.bookmark/` directory. */
+function findExistingBookmarkRoot(cwd: string): string | null {
+  let dir = cwd;
+  while (dir && dir !== dirname(dir)) {
+    if (existsSync(join(dir, '.bookmark'))) return dir;
+    dir = dirname(dir);
+  }
+  return null;
+}
+
+function isHomePointerFile(path: string): boolean {
+  try {
+    return parseIdentity(readFileSync(path, 'utf-8')).identity?.scope === 'home';
+  } catch {
+    return false;
+  }
+}
+
+export interface HookStorage {
+  /** Directory that owns the storage (git repo root, or nearest existing `.bookmark/` parent). */
+  root: string;
+  storagePath: string;
+  /** True when the root is $HOME (or above it) or holds a `scope: home` pointer file. */
+  homePointer: boolean;
+}
+
+/**
+ * Storage for per-turn hooks (Stop). Unlike `getStoragePath`, this never falls
+ * back to raw cwd: the root is the git repo root of cwd, else the nearest
+ * ancestor that already has `.bookmark/`, else null (no storage — the hook
+ * must write nothing). Hooks must not bootstrap storage from a subfolder or $HOME.
+ */
+export function resolveHookStorage(cwd: string, config?: BookmarkConfig): HookStorage | null {
+  const home = homedir();
+  const root = findGitRoot(cwd) ?? findExistingBookmarkRoot(cwd);
+  if (!root) return null;
+  const cfg = config ?? loadConfig(root);
+  const storagePath = cfg.storagePath.startsWith('/') ? cfg.storagePath : join(root, cfg.storagePath);
+  const homePointer =
+    root === home ||
+    (home !== '' && home.startsWith(root.endsWith(sep) ? root : root + sep)) ||
+    isHomePointerFile(join(storagePath, 'bookmark.context.md'));
+  return { root, storagePath, homePointer };
+}
+
+/** `BOOKMARK_STOP_MODE` env, then `handoff.stopMode` config, default `threshold`. */
+export function resolveStopMode(config?: Pick<BookmarkConfig, 'handoff'>, env: NodeJS.ProcessEnv = process.env): StopMode {
+  const raw = (env.BOOKMARK_STOP_MODE ?? config?.handoff?.stopMode ?? '').trim().toLowerCase();
+  return raw === 'every-turn' || raw === 'strict' ? 'every-turn' : 'threshold';
 }

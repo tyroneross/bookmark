@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,7 +54,8 @@ describe('R6 hooks without a session id', () => {
 
   it('stop with a session id blocks once and names only the per-session file', () => {
     const repo = newRepo('with-session');
-    const out = JSON.parse(run(['stop'], { cwd: repo, session_id: 'S1' }, { CLAUDE_PID: '77' }).stdout);
+    const transcript = writeTranscript(join(sandbox, 'transcripts'), 'S1', 160_000);
+    const out = JSON.parse(run(['stop'], { cwd: repo, session_id: 'S1', transcript_path: transcript }, { CLAUDE_PID: '77' }).stdout);
     expect(out.decision).toBe('block');
     expect(out.reason).toContain(join(repo, '.bookmark', 'sessions', 'S1', 'handoff.md'));
     expect(out.reason).not.toContain('bookmark.context.md');
@@ -85,5 +86,98 @@ describe('R7 / A8 handoff CLI', () => {
     expect(run(['handoff', 'verify', '--path', handoff, '--sha', record.sha256], undefined).status).toBe(0);
     expect(run(['handoff', 'verify', '--path', handoff, '--sha', '0'.repeat(64)], undefined).status).toBe(1);
     expect(JSON.parse(run(['handoff', 'list', '--json', '--cwd', repo], undefined).stdout)).toHaveLength(1);
+  });
+});
+
+// ─── Stop fires at every turn end: block only near the context limit ───
+
+/** One assistant usage record; claude-opus-4-5 has a 200K window. */
+function writeTranscript(dir: string, sessionId: string, usedTokens: number): string {
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, `${sessionId}-${usedTokens}.jsonl`);
+  const lines = [
+    { type: 'user', sessionId, message: { role: 'user', content: 'hello' } },
+    {
+      type: 'assistant',
+      sessionId,
+      message: { model: 'claude-opus-4-5', role: 'assistant', content: [{ type: 'text', text: 'ok' }], usage: { input_tokens: usedTokens, output_tokens: 0 } },
+    },
+  ];
+  writeFileAtomic(path, lines.map(line => JSON.stringify(line)).join('\n') + '\n');
+  return path;
+}
+
+function newGitRepo(name: string): string {
+  const repo = join(sandbox, name);
+  mkdirSync(join(repo, '.git'), { recursive: true });
+  return repo;
+}
+
+describe('Stop at an ordinary turn end', () => {
+  it('(1) below threshold: approves, writes no marker, creates no .bookmark in a non-repo folder', () => {
+    const plain = join(sandbox, 'plain-folder', 'analysis');
+    mkdirSync(plain, { recursive: true });
+    const transcript = writeTranscript(join(sandbox, 'transcripts'), 'T1', 20_000);
+    const out = JSON.parse(run(['stop'], { cwd: plain, session_id: 'T1', transcript_path: transcript }).stdout);
+    expect(out).toEqual({ decision: 'approve' });
+    expect(existsSync(join(plain, '.bookmark'))).toBe(false);
+    expect(existsSync(join(sandbox, 'plain-folder', '.bookmark'))).toBe(false);
+
+    const repo = newGitRepo('below-threshold-repo');
+    const repoOut = JSON.parse(run(['stop'], { cwd: repo, session_id: 'T1', transcript_path: transcript }).stdout);
+    expect(repoOut).toEqual({ decision: 'approve' });
+    expect(existsSync(join(repo, '.bookmark', 'sessions', 'T1', 'stop-requested'))).toBe(false);
+  });
+
+  it('(1b) no measurable usage (no transcript): approves', () => {
+    const repo = newGitRepo('no-transcript-repo');
+    const out = JSON.parse(run(['stop'], { cwd: repo, session_id: 'T0' }).stdout);
+    expect(out).toEqual({ decision: 'approve' });
+  });
+
+  it('(2) at/above threshold with a stale handoff: blocks once, then approves', () => {
+    const repo = newGitRepo('above-threshold-repo');
+    const transcript = writeTranscript(join(sandbox, 'transcripts'), 'T2', 160_000);
+    const first = JSON.parse(run(['stop'], { cwd: repo, session_id: 'T2', transcript_path: transcript }).stdout);
+    expect(first.decision).toBe('block');
+    expect(first.reason).toContain(join(repo, '.bookmark', 'sessions', 'T2', 'handoff.md'));
+    const second = JSON.parse(run(['stop'], { cwd: repo, session_id: 'T2', transcript_path: transcript }).stdout);
+    expect(second).toEqual({ decision: 'approve' });
+  });
+
+  it('(2b) BOOKMARK_STOP_MODE=every-turn restores the strict block below threshold', () => {
+    const repo = newGitRepo('strict-mode-repo');
+    const transcript = writeTranscript(join(sandbox, 'transcripts'), 'T5', 20_000);
+    const out = JSON.parse(run(['stop'], { cwd: repo, session_id: 'T5', transcript_path: transcript }, { BOOKMARK_STOP_MODE: 'every-turn' }).stdout);
+    expect(out.decision).toBe('block');
+  });
+
+  it('(3) cwd in a repo subfolder: storage resolves to the repo root, no stray .bookmark', () => {
+    const repo = newGitRepo('subfolder-repo');
+    const sub = join(repo, 'analysis', 'diagram');
+    mkdirSync(sub, { recursive: true });
+    const transcript = writeTranscript(join(sandbox, 'transcripts'), 'T3', 160_000);
+    const out = JSON.parse(run(['stop'], { cwd: sub, session_id: 'T3', transcript_path: transcript }).stdout);
+    expect(out.decision).toBe('block');
+    expect(out.reason).toContain(join(repo, '.bookmark', 'sessions', 'T3', 'handoff.md'));
+    expect(existsSync(join(sub, '.bookmark'))).toBe(false);
+    expect(existsSync(join(repo, 'analysis', '.bookmark'))).toBe(false);
+  });
+
+  it('(4) cwd = $HOME with a scope:home pointer: approves and leaves the pointer untouched', () => {
+    const home = join(sandbox, 'home');
+    const pointerPath = join(home, '.bookmark', 'bookmark.context.md');
+    const pointer = [
+      '# Active Work Pointer (home-scoped bookmark)', '', '<!-- BOOKMARK_IDENTITY', 'scope: home',
+      'project: POINTER_ONLY', 'points_to_project: example', 'points_to_canonical: /tmp/example/.bookmark/bookmark.context.md',
+      '-->', '',
+    ].join('\n');
+    writeFileAtomic(pointerPath, pointer);
+    const before = readdirSync(join(home, '.bookmark')).sort();
+    const transcript = writeTranscript(join(sandbox, 'transcripts'), 'T4', 160_000);
+    const out = JSON.parse(run(['stop'], { cwd: home, session_id: 'T4', transcript_path: transcript }).stdout);
+    expect(out).toEqual({ decision: 'approve' });
+    expect(readFileSync(pointerPath, 'utf-8')).toBe(pointer);
+    expect(readdirSync(join(home, '.bookmark')).sort()).toEqual(before);
   });
 });

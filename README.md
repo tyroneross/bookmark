@@ -28,7 +28,7 @@ Bookmark runs as a small external process. Four hooks keep a durable handoff cur
 | **PreCompact** | Before context compaction | Captures a mechanical file/tool checkpoint |
 | **SessionStart** | New session begins | Restores prior context so Claude knows what you were doing |
 | **UserPromptSubmit** | Every user message | Checks time and token thresholds; alerts at 75% used |
-| **Stop** | Session ends | Captures files and requires a fresh semantic handoff |
+| **Stop** | End of every assistant turn | Captures files; asks once per session for a fresh handoff only when context usage is at or above the token threshold (75%) |
 
 When you open a new terminal and run `claude`, Bookmark restores your prior context. Claude greets you knowing what you were working on, what decisions were made, and what's left to do.
 
@@ -137,10 +137,15 @@ Bookmark installs four hooks because each protects a separate lifecycle boundary
 | `SessionStart` | Restore the latest durable handoff into a new session |
 | `UserPromptSubmit` | Run periodic capture and model-aware token-threshold checks |
 | `PreCompact` | Save a final mechanical checkpoint before compaction |
-| `Stop` | Save at exit and require a complete semantic handoff once |
+| `Stop` | Save files at each turn end; request a handoff once, only near the context limit |
 
 `UserPromptSubmit` is the only hook required for periodic and token-threshold capture. The other
 three complete the restore, pre-compaction, and exit continuity path.
+
+Claude Code fires `Stop` at the end of every assistant turn, not only at exit. Bookmark therefore
+approves ordinary turn ends silently. Stop writes only to the git repo root of `cwd` (or the nearest
+ancestor that already has `.bookmark/`); it never creates `.bookmark/` in a non-repo folder or `$HOME`,
+and never asks Claude to overwrite a `scope: home` pointer.
 
 Manual capture does not require another hook: run `/bookmark:snapshot` or `bookmark snapshot`.
 
@@ -244,6 +249,7 @@ handoff on SessionStart and one short instruction when a token threshold is cros
 | `BOOKMARK_INTERVAL` | `5` | Snapshot interval in minutes |
 | `BOOKMARK_TOKEN_THRESHOLD` | `0.75` | Context-used fraction that captures and alerts |
 | `BOOKMARK_CONTEXT_LIMIT` | model-aware | Explicit context-window override in tokens |
+| `BOOKMARK_STOP_MODE` | `threshold` | `threshold`: Stop blocks only when usage is at or above the lowest token threshold. `every-turn`: block once on any turn end without a fresh handoff (old behaviour). Config key: `handoff.stopMode` |
 | `BOOKMARK_STORAGE_PATH` | `.bookmark` | Storage directory |
 | `BOOKMARK_VERBOSE` | `false` | Enable verbose logging |
 | `BOOKMARK_SKIP_SETUP` | `false` | Skip postinstall auto-setup |

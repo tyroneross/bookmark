@@ -10,12 +10,12 @@ Bookmark preserves session context across terminal closures and compactions. You
 ## How It Works
 
 **Hooks** (configured in settings.json, all command-type):
-- **Stop** — Blocks once if bookmark.context.md is stale, asking you to write it before exit
+- **Stop** — Fires at the end of every turn. Captures files; blocks once per session only when context usage is at or above the token threshold (default 75%) and this session's handoff is stale
 - **PreCompact** — Captures a mechanical file/tool checkpoint before compaction
 - **SessionStart** — Restores bookmark.context.md content on startup, cleans session state
 - **UserPromptSubmit** — Measures transcript usage, captures time-based checkpoints, and at 75% asks you to refresh the handoff and recommend a new session
 
-**You write the summary.** The Stop hook blocks exit once if `.bookmark/bookmark.context.md` is stale (<2 min). Keep the handoff under 800 tokens with current task, status, remaining work, decisions, risks and open questions, sources of truth, and next steps. Separate completed, validated, committed, pushed, and deployed work. Use absolute file paths and durable pointers. On retry, Stop always approves (max 1 block).
+**You write the summary.** The Stop hook asks for the handoff (`.bookmark/sessions/<session_id>/handoff.md`) once per session, and only when context usage is at or above the token threshold and the handoff is stale. Ordinary turn ends are approved silently. `BOOKMARK_STOP_MODE=every-turn` restores blocking on any stale turn end. Keep the handoff under 800 tokens with current task, status, remaining work, decisions, risks and open questions, sources of truth, and next steps. Separate completed, validated, committed, pushed, and deployed work. Use absolute file paths and durable pointers. On retry, Stop always approves (max 1 block).
 
 **File tracking is automatic.** The UserPromptSubmit hook captures file changes and tool usage when its interval or token threshold is due. This data supplements your summary in `trails/files.md`.
 
