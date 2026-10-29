@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.1](https://github.com/tyroneross/bookmark/compare/bookmark-v0.6.0...bookmark-v0.6.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **mcp:** report the package.json version instead of a hard-coded 0.3.2 ([660a221](https://github.com/tyroneross/bookmark/commit/660a2219837cc44f245596ea6383a6a41dc1c8eb))
+* **plugin:** run the committed bundle so GitHub plugin installs work without npm ([3562c1d](https://github.com/tyroneross/bookmark/commit/3562c1d1512d149358727a9400e99295e7f91e47))
+
 ## [0.6.0](https://github.com/tyroneross/bookmark/compare/bookmark-v0.5.0...bookmark-v0.6.0) (2026-10-29)
 
 
