@@ -56,6 +56,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Plugin installs from GitHub run the committed bundle/ and hooks/hooks.json,
+      # so both must match the source in this commit.
+      - name: Committed plugin bundle and hooks match the source
+        run: |
+          node scripts/gen-plugin-hooks.mjs
+          git diff --exit-code -- bundle hooks/hooks.json || { echo "::error::Run npm run build && node scripts/gen-plugin-hooks.mjs and commit bundle/ and hooks/hooks.json"; exit 1; }
+
       # Build runs before test to match publish.yml's order and to catch a
       # tsc failure as its own red step, but the suite itself does not need
       # dist/: every *.test.ts under src/ imports its sibling source module

@@ -370,8 +370,31 @@ export function installHost(
  * no `--host` (stdin detection picks the dialect) and no version pin (a pin
  * here would go stale on every release-please version bump).
  */
+/** Committed self-contained build, relative to the plugin root (built by scripts/build-bundle.mjs). */
+export const PLUGIN_BUNDLE = 'bundle/cli/index.mjs';
+
+/**
+ * Plugin hook command: run the plugin's own committed bundle, so a plugin
+ * installed from GitHub runs that commit's code. npx is the fallback for a
+ * host that does not set CLAUDE_PLUGIN_ROOT or a copy without the bundle.
+ */
+export function pluginHookCommand(role: Role, fallback: string): string {
+  const bundle = `"\${CLAUDE_PLUGIN_ROOT:-}/${PLUGIN_BUNDLE}"`;
+  return `if [ -f ${bundle} ]; then node ${bundle} ${role}; else ${UNPINNED_BIN} ${role}; fi 2>/dev/null || ${fallback}`;
+}
+
 export function pluginHooksConfig(claude: HostManifest): HookConfig {
   // Codex loads this file too: `{}` is a valid Stop no-op for both hosts, `{"decision":"approve"}` is Claude-only.
   const shared: HostManifest = { ...claude, output: { ...claude.output, noop: { ...claude.output.noop, stop: {} } } };
-  return mergeHookConfig({}, shared, planEntries(shared, UNPINNED_BIN, { host: false })).merged;
+  const entries = planEntries(shared, UNPINNED_BIN, { host: false }).map(item => {
+    const generated = hookCommand(shared, item.role, UNPINNED_BIN, { host: false });
+    const fallback = generated.slice(generated.lastIndexOf(' || ') + 4);
+    const command = pluginHookCommand(item.role, fallback);
+    const swap = (handler: Record<string, unknown>) => ({ ...handler, [shared.config.commandKey]: command });
+    const entry = Array.isArray(item.entry.hooks)
+      ? { ...item.entry, hooks: (item.entry.hooks as Record<string, unknown>[]).map(swap) }
+      : swap(item.entry);
+    return { ...item, entry };
+  });
+  return mergeHookConfig({}, shared, entries).merged;
 }

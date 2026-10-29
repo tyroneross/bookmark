@@ -157,6 +157,10 @@ map, config path and output dialect, and `bookmark install` generates each host'
   Claude Code and Codex plugin surfaces load it. It has no version pin because a pin would go stale
   on every release-please version bump. Its Stop fallback prints `{}`, which both hosts accept as a
   no-op; `{"decision":"approve"}` is Claude-only.
+- Plugin hooks and the plugin MCP server run the committed `bundle/` (one self-contained file each,
+  built by `npm run build`), so a plugin installed from GitHub runs that commit's code with no npm
+  download and no `node_modules`. Hooks fall back to `npx` only when `CLAUDE_PLUGIN_ROOT` is unset
+  or the bundle is missing. CI fails if `bundle/` or `hooks/hooks.json` differ from the source.
 - Copilot has no prompt-time hook, so usage is measured at `agentStop`. Without a configured limit,
   the first stop asks the agent once to tell you to set `BOOKMARK_CONTEXT_LIMIT`. Within a session,
   the turn-count estimate never decreases.

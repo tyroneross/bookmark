@@ -20,6 +20,7 @@
   },
   "files": [
     "dist",
+    "bundle",
     "commands",
     "skills",
     "hooks",
@@ -33,7 +34,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc && npm run build:fixshebang",
+    "build": "tsc && npm run build:fixshebang && npm run build:bundle",
     "build:fixshebang": "node -e \"const fs=require('fs');const f='dist/cli/index.js';let c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!')){c='#!/usr/bin/env node\\n'+c;fs.writeFileSync(f,c);}\"",
     "dev": "tsc --watch",
     "start": "node dist/cli/index.js",
@@ -42,7 +43,8 @@
     "prepublishOnly": "npm run clean && npm run build",
     "postinstall": "node dist/setup/auto-setup.js || true",
     "install-plugin": "bash scripts/install-plugin.sh --global",
-    "mcp": "node dist/mcp/server.js"
+    "mcp": "node dist/mcp/server.js",
+    "build:bundle": "node scripts/build-bundle.mjs"
   },
   "keywords": [
     "context",
@@ -75,6 +77,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "esbuild": "^0.28.2",
     "typescript": "^5.3.0",
     "vitest": "^4.0.0"
   }

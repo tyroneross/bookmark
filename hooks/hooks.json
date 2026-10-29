@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @tyroneross/bookmark restore 2>/dev/null || true",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-}/bundle/cli/index.mjs\" ]; then node \"${CLAUDE_PLUGIN_ROOT:-}/bundle/cli/index.mjs\" restore; else npx -y @tyroneross/bookmark restore; fi 2>/dev/null || true",
             "timeout": 15
           }
         ]
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @tyroneross/bookmark context-check 2>/dev/null || echo '{}'",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-}/bundle/cli/index.mjs\" ]; then node \"${CLAUDE_PLUGIN_ROOT:-}/bundle/cli/index.mjs\" context-check; else npx -y @tyroneross/bookmark context-check; fi 2>/dev/null || echo '{}'",
             "timeout": 10
           }
         ]
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @tyroneross/bookmark precompact 2>/dev/null || echo '{}'",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-}/bundle/cli/index.mjs\" ]; then node \"${CLAUDE_PLUGIN_ROOT:-}/bundle/cli/index.mjs\" precompact; else npx -y @tyroneross/bookmark precompact; fi 2>/dev/null || echo '{}'",
             "timeout": 10
           }
         ]
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @tyroneross/bookmark stop 2>/dev/null || echo '{}'",
+            "command": "if [ -f \"${CLAUDE_PLUGIN_ROOT:-}/bundle/cli/index.mjs\" ]; then node \"${CLAUDE_PLUGIN_ROOT:-}/bundle/cli/index.mjs\" stop; else npx -y @tyroneross/bookmark stop; fi 2>/dev/null || echo '{}'",
             "timeout": 10
           }
         ]

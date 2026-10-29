@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -186,6 +186,17 @@ describe('audit round 3', () => {
   it('N4: the shared plugin hooks file falls back to {} at Stop (valid for Claude and Codex)', () => {
     const stop = (pluginHooksConfig(loadManifest('claude')!).hooks!.Stop as Array<{ hooks: Array<{ command: string }> }>)[0].hooks[0].command;
     expect(stop.endsWith("|| echo '{}'")).toBe(true);
+  });
+
+  it('plugin hooks run the committed bundle from CLAUDE_PLUGIN_ROOT, with npx only as fallback', () => {
+    const hooks = pluginHooksConfig(loadManifest('claude')!).hooks!;
+    for (const [event, groups] of Object.entries(hooks)) {
+      const command = (groups as Array<{ hooks: Array<{ command: string }> }>)[0].hooks[0].command;
+      expect(command, event).toMatch(/^if \[ -f "\$\{CLAUDE_PLUGIN_ROOT:-\}\/bundle\/cli\/index\.mjs" \]; then node /);
+      expect(command, event).toContain('; else npx -y @tyroneross/bookmark ');
+    }
+    expect(existsSync(join(repoRoot, 'bundle', 'cli', 'index.mjs'))).toBe(true);
+    expect(existsSync(join(repoRoot, 'bundle', 'mcp', 'server.mjs'))).toBe(true);
   });
 
   it('H2 gap: skipped hook setup on malformed settings prints one stderr line', () => {
