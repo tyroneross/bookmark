@@ -6,7 +6,10 @@
  * Exposes context snapshot tools: snapshot, restore, status, list, show.
  */
 
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { createInterface } from "readline";
+import { fileURLToPath } from "node:url";
 import { TOOLS, handleToolCall } from "./tools.js";
 
 // --- JSON-RPC transport over stdio ---
@@ -39,9 +42,19 @@ function sendError(id: string | number, code: number, message: string) {
 
 // --- MCP Protocol ---
 
+// Read from package.json, which release-please bumps; dist/ and bundle/ both sit two levels deep.
+function packageVersion(): string {
+  try {
+    const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    return JSON.parse(readFileSync(join(root, "package.json"), "utf-8")).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 const SERVER_INFO = {
   name: "bookmark",
-  version: "0.3.2",
+  version: packageVersion(),
 };
 
 const CAPABILITIES = {

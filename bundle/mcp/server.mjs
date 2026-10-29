@@ -3,7 +3,10 @@ import { createRequire as __bookmarkCreateRequire } from 'node:module';
 const require = __bookmarkCreateRequire(import.meta.url);
 
 // src/mcp/server.ts
+import { readFileSync as readFileSync12 } from "node:fs";
+import { dirname as dirname4, join as join13 } from "node:path";
 import { createInterface } from "readline";
+import { fileURLToPath } from "node:url";
 
 // src/config.ts
 import { readFileSync as readFileSync2, writeFileSync, existsSync as existsSync2, mkdirSync, readdirSync, renameSync, rmdirSync } from "node:fs";
@@ -1730,9 +1733,17 @@ function sendResult(id, result) {
 function sendError(id, code, message) {
   send({ jsonrpc: "2.0", id, error: { code, message } });
 }
+function packageVersion() {
+  try {
+    const root = join13(dirname4(fileURLToPath(import.meta.url)), "..", "..");
+    return JSON.parse(readFileSync12(join13(root, "package.json"), "utf-8")).version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 var SERVER_INFO = {
   name: "bookmark",
-  version: "0.3.2"
+  version: packageVersion()
 };
 var CAPABILITIES = {
   tools: {}
