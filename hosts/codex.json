@@ -1,0 +1,51 @@
+{
+  "id": "codex",
+  "name": "OpenAI Codex CLI",
+  "agentName": "Codex",
+  "newSessionHint": "start a new Codex session by exiting and reopening Codex",
+  "source": "https://learn.chatgpt.com/docs/hooks (fetched 2026-10-28); docs/research/2026-10-28-multi-host-support.md section 1",
+  "detectPriority": 10,
+  "detect": {
+    "anyKeys": ["turn_id"],
+    "transcriptPathIncludes": ["/.codex/sessions/"],
+    "env": ["PLUGIN_ROOT"]
+  },
+  "config": {
+    "path": "~/.codex/hooks.json",
+    "layout": "grouped",
+    "matcher": null,
+    "fileVersion": null,
+    "commandKey": "command",
+    "timeoutKey": null,
+    "timeouts": null
+  },
+  "events": {
+    "restore": "SessionStart",
+    "context-check": "UserPromptSubmit",
+    "precompact": "PreCompact",
+    "stop": "Stop"
+  },
+  "fields": {
+    "sessionId": ["session_id"],
+    "transcriptPath": ["transcript_path"],
+    "cwd": ["cwd"],
+    "model": ["model"],
+    "prompt": ["prompt"],
+    "source": ["source"],
+    "stopHookActive": ["stop_hook_active"]
+  },
+  "output": {
+    "restore": "text",
+    "inject": "hookSpecificOutput",
+    "blockDecision": "block",
+    "systemMessage": true,
+    "noop": { "stop": {}, "default": {} }
+  },
+  "usage": "transcript-jsonl",
+  "capabilities": {
+    "injectOnPrompt": true,
+    "blockStop": true,
+    "usageInTranscript": true,
+    "windowInTranscript": true
+  }
+}

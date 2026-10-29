@@ -1,0 +1,51 @@
+{
+  "id": "gemini",
+  "name": "Gemini CLI",
+  "agentName": "Gemini",
+  "newSessionHint": "start a new Gemini CLI session by exiting and reopening it",
+  "source": "https://geminicli.com/docs/hooks/reference.md (fetched 2026-10-28); docs/research/2026-10-28-multi-host-support.md section 2",
+  "detectPriority": 30,
+  "detect": {
+    "allKeys": ["session_id", "timestamp"],
+    "noneKeys": ["turn_id"],
+    "transcriptPathIncludes": ["/.gemini/tmp/"]
+  },
+  "config": {
+    "path": "~/.gemini/settings.json",
+    "layout": "grouped",
+    "matcher": "",
+    "fileVersion": null,
+    "commandKey": "command",
+    "timeoutKey": "timeout",
+    "timeouts": { "restore": 5000, "context-check": 10000, "precompact": 10000, "stop": 10000 }
+  },
+  "events": {
+    "restore": "SessionStart",
+    "context-check": "BeforeAgent",
+    "precompact": "PreCompress",
+    "stop": "AfterAgent"
+  },
+  "fields": {
+    "sessionId": ["session_id"],
+    "transcriptPath": ["transcript_path"],
+    "cwd": ["cwd"],
+    "model": ["model"],
+    "prompt": ["prompt"],
+    "source": ["source"],
+    "stopHookActive": ["stop_hook_active"]
+  },
+  "output": {
+    "restore": "hookSpecificOutput",
+    "inject": "hookSpecificOutput",
+    "blockDecision": "deny",
+    "systemMessage": true,
+    "noop": { "stop": {}, "default": {} }
+  },
+  "usage": "gemini-session",
+  "capabilities": {
+    "injectOnPrompt": false,
+    "blockStop": true,
+    "usageInTranscript": true,
+    "windowInTranscript": false
+  }
+}

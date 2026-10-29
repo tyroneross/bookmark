@@ -23,6 +23,7 @@
     "commands",
     "skills",
     "hooks",
+    "hosts",
     "agents",
     ".claude-plugin",
     ".codex-plugin",

@@ -207,3 +207,38 @@ describe('one storage resolver for every hook role', () => {
     expect(existsSync(join(loose, '.bookmark'))).toBe(false);
   });
 });
+
+describe('--host adapters drive the real CLI', () => {
+  const fixtures = join(repoRoot, 'fixtures', 'hosts');
+  const fill = (host: string, role: string, cwd: string, transcript: string) =>
+    JSON.parse(readFileSync(join(fixtures, host, `${role}.json`), 'utf-8')
+      .replaceAll('__CWD__', cwd).replaceAll('__TRANSCRIPT__', transcript));
+
+  it('codex: block uses the Codex dialect and names Codex; storage lands at the git root', () => {
+    const repo = newGitRepo('host-codex');
+    const sub = join(repo, 'a', 'b');
+    mkdirSync(sub, { recursive: true });
+    const rollout = join(fixtures, 'codex', 'rollout.jsonl');
+    const out = JSON.parse(run(['stop', '--host', 'codex'], fill('codex', 'stop', sub, rollout)).stdout);
+    expect(out.decision).toBe('block');
+    expect(out.systemMessage).toContain('Codex');
+    expect(existsSync(join(repo, '.bookmark'))).toBe(true);
+    expect(existsSync(join(sub, '.bookmark'))).toBe(false);
+    // Second turn end: once per session, and Codex Stop needs JSON even for a no-op.
+    expect(run(['stop', '--host', 'codex'], fill('codex', 'stop', sub, rollout)).stdout).toBe('{}');
+  });
+
+  it('gemini: AfterAgent block uses decision deny', () => {
+    const repo = newGitRepo('host-gemini');
+    const out = run(['stop', '--host', 'gemini'], fill('gemini', 'stop', repo, join(fixtures, 'gemini', 'session.jsonl')), { BOOKMARK_CONTEXT_LIMIT: '1000000' });
+    expect(JSON.parse(out.stdout).decision).toBe('deny');
+  });
+
+  it('copilot: estimated usage at stop is labelled estimated', () => {
+    const repo = newGitRepo('host-copilot');
+    const out = run(['stop', '--host', 'copilot'], fill('copilot', 'stop', repo, join(fixtures, 'copilot', 'events.jsonl')), { BOOKMARK_CONTEXT_LIMIT: '16000' });
+    const parsed = JSON.parse(out.stdout);
+    expect(parsed.decision).toBe('block');
+    expect(parsed.reason).toContain('(estimated)');
+  });
+});

@@ -1,0 +1,8 @@
+{
+  "session_id": "fixture-codex-0001",
+  "transcript_path": "__TRANSCRIPT__",
+  "cwd": "__CWD__",
+  "hook_event_name": "PreCompact",
+  "model": "gpt-fixture",
+  "trigger": "auto"
+}

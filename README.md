@@ -106,7 +106,37 @@ bookmark config --interval 15  # Change snapshot interval to 15 minutes
 bookmark config --token-threshold 75  # Capture and alert at 75% used
 bookmark config --context-limit 500000  # Override model context limit
 bookmark setup               # Interactive configuration
+bookmark install --host codex --dry-run   # Print the hook config Bookmark would merge for a host
+bookmark install --host gemini            # Merge Bookmark's hooks into that host's config (backs up first)
+bookmark catalog refresh     # Cache the models.dev context-window catalog
 ```
+
+## Agent hosts
+
+Bookmark's core (thresholds, state, handoffs, restore) is host-free. A small adapter per host
+translates hook stdin and stdout. Host facts live in one place: `hosts/<id>.json` holds the event
+map, config path and output dialect, and `bookmark install` generates each host's config from it.
+
+| Host (`--host`) | Config written by `install` | Restore | Context check | Precompact | Stop | Usage source |
+|---|---|---|---|---|---|---|
+| `claude` | `~/.claude/settings.json` | SessionStart | UserPromptSubmit | PreCompact | Stop | transcript `usage` |
+| `codex` | `~/.codex/hooks.json` | SessionStart | UserPromptSubmit | PreCompact | Stop | rollout `token_count` (reports its window) |
+| `gemini` | `~/.gemini/settings.json` | SessionStart | BeforeAgent (measures; asks for the handoff at AfterAgent) | PreCompress | AfterAgent (`deny`) | session `tokens` |
+| `copilot` | `~/.copilot/hooks/bookmark.json` | sessionStart | — (measured at agentStop) | preCompact | agentStop | turn-count estimate, labelled "estimated" |
+
+- Each hook command passes `--host <id>`. Without it, Bookmark detects the host from the hook's stdin
+  (for example `turn_id` → Codex, camelCase `sessionId` → Copilot); Claude Code is the fallback.
+- `install` merges into the existing file: other hooks and keys stay, an older Bookmark entry is
+  replaced in place, a second run changes nothing, and the previous file is copied to
+  `<file>.bookmark-backup-<timestamp>` before any write. `--dry-run` prints and writes nothing.
+  `--bin <cmd>` (default `npx @tyroneross/bookmark`) sets the command hooks run.
+- Before writing, `install` checks the event names with `rosslabs-lsp compat --section agent-hooks`.
+  If that tool is not installed, it warns and continues; if it lists an event as unknown for the
+  host, `install` refuses to write.
+- The plugin's `hooks/hooks.json` (loaded by both the Claude Code and Codex plugin surfaces) has no
+  `--host`, so stdin detection picks the dialect.
+- Gemini's session token schema and Copilot's transcript format are not documented by their
+  vendors; Bookmark's readers for them are best-effort (see `docs/research/2026-10-28-multi-host-support.md`).
 
 ## Token Threshold Capture
 
@@ -118,6 +148,11 @@ or lower post-compaction usage re-arms the threshold.
 
 Codex sessions are measured from the rollout file: the latest `token_count` event gives the tokens
 used and the context window Codex reports for the active model, so no lookup table is needed.
+
+Bookmark finds a model's context window in this order: `BOOKMARK_CONTEXT_LIMIT` (or
+`bookmark config --context-limit`); the window the host reports (Codex); the cached
+[models.dev](https://models.dev) catalog, filled only by `bookmark catalog refresh` (hooks never
+use the network); the built-in table below; otherwise unknown, and Bookmark asks for the limit.
 
 For Claude Code transcripts, Bookmark resolves context limits only for model IDs documented by Anthropic. If the transcript
 reports an unknown model, Bookmark pauses token-threshold capture, asks the user for the verified
@@ -146,9 +181,12 @@ Bookmark installs four hooks because each protects a separate lifecycle boundary
 three complete the restore, pre-compaction, and exit continuity path.
 
 Claude Code fires `Stop` at the end of every assistant turn, not only at exit. Bookmark therefore
-approves ordinary turn ends silently. Stop writes only to the git repo root of `cwd` (or the nearest
-ancestor that already has `.bookmark/`); it never creates `.bookmark/` in a non-repo folder or `$HOME`,
-and never asks Claude to overwrite a `scope: home` pointer.
+approves ordinary turn ends silently. Every hook (restore, context check, precompact, stop) resolves
+storage the same way: the git repo root of `cwd`, else the nearest ancestor that already has
+`.bookmark/`, else nothing is written. Restore, context check and precompact create `.bookmark/` at
+that root when it is missing; stop never creates it. No hook creates `.bookmark/` in a non-repo
+folder, a subfolder, or `$HOME` (restore can still follow an existing `scope: home` pointer), and
+Stop never asks the agent to overwrite a `scope: home` pointer.
 
 Manual capture does not require another hook: run `/bookmark:snapshot` or `bookmark snapshot`.
 
@@ -256,6 +294,12 @@ handoff on SessionStart and one short instruction when a token threshold is cros
 | `BOOKMARK_STORAGE_PATH` | `.bookmark` | Storage directory |
 | `BOOKMARK_VERBOSE` | `false` | Enable verbose logging |
 | `BOOKMARK_SKIP_SETUP` | `false` | Skip postinstall auto-setup |
+| `BOOKMARK_MODEL_CATALOG` | `$XDG_CACHE_HOME/bookmark/models-dev.json` (else `~/.cache/bookmark/models-dev.json`) | Cached models.dev catalog used for context windows |
+| `BOOKMARK_TOKENS_PER_TURN` | `4000` | Tokens per user turn for hosts measured by turn count (Copilot); results are labelled "estimated" |
+| `BOOKMARK_COMPAT_BIN` | `rosslabs-lsp` | Binary `bookmark install` calls to validate hook event names |
+
+Hook commands also accept `--host <id>` (default: detect from stdin). `bookmark install` takes
+`--host <id>` (required), `--dry-run` (default off) and `--bin <cmd>` (default `npx @tyroneross/bookmark`).
 
 ## Requirements
 

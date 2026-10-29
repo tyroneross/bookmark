@@ -1,0 +1,8 @@
+{
+  "session_id": "fixture-gemini-0001",
+  "transcript_path": "__TRANSCRIPT__",
+  "cwd": "__CWD__",
+  "hook_event_name": "SessionStart",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "source": "startup"
+}

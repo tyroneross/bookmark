@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-codex-0001",
+  "transcript_path": "__TRANSCRIPT__",
+  "cwd": "__CWD__",
+  "hook_event_name": "Stop",
+  "model": "gpt-fixture",
+  "turn_id": "turn-0002",
+  "stop_hook_active": false,
+  "last_assistant_message": "done"
+}

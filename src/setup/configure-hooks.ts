@@ -1,5 +1,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadManifest, type HostManifest } from '../host/manifest.js';
+import { isBookmarkEntry, mergeHookConfig, planEntries, writeJsonConfig, type HookConfig, type InstallEntry } from '../host/install.js';
 
 interface HookEntry {
   type: string;
@@ -20,43 +22,12 @@ interface Settings {
   [key: string]: unknown;
 }
 
-const BOOKMARK_HOOKS: Record<string, SettingsHook> = {
-  Stop: {
-    matcher: '',
-    hooks: [{
-      type: 'command',
-      command: `npx @tyroneross/bookmark stop 2>/dev/null || echo '{"decision": "approve"}'`,
-      timeout: 10000,
-    }],
-  },
-  PreCompact: {
-    matcher: '',
-    hooks: [{
-      type: 'command',
-      command: `npx @tyroneross/bookmark precompact 2>/dev/null || echo '{}'`,
-      timeout: 10000,
-    }],
-  },
-  SessionStart: {
-    matcher: '',
-    hooks: [{
-      type: 'command',
-      command: `npx @tyroneross/bookmark restore 2>/dev/null || echo '{}'`,
-      timeout: 5000,
-    }],
-  },
-  UserPromptSubmit: {
-    matcher: '',
-    hooks: [{
-      type: 'command',
-      command: `npx @tyroneross/bookmark context-check 2>/dev/null || echo '{}'`,
-      timeout: 10000,
-    }],
-  },
-};
-
-const BOOKMARK_MARKER = '@tyroneross/bookmark';
-const BOOKMARK_PROMPT_MARKER = '.bookmark/bookmark.context.md';
+/** Claude Code hook entries, generated from hosts/claude.json (the single source of host facts). */
+function claudePlan(): { manifest: HostManifest; entries: InstallEntry[] } {
+  const manifest = loadManifest('claude');
+  if (!manifest) throw new Error('hosts/claude.json is missing from the Bookmark package');
+  return { manifest, entries: planEntries(manifest) };
+}
 
 /**
  * Resolve the plugin path for the settings.json plugins array.
@@ -84,14 +55,8 @@ function resolvePluginPath(cwd: string): string | null {
   return null;
 }
 
-/**
- * Check if a hook group contains a bookmark hook (command or prompt type).
- */
 function isBookmarkHook(hookGroup: SettingsHook): boolean {
-  return hookGroup.hooks.some(hh =>
-    hh.command?.includes(BOOKMARK_MARKER) ||
-    hh.prompt?.includes(BOOKMARK_PROMPT_MARKER)
-  );
+  return isBookmarkEntry(hookGroup);
 }
 
 /**
@@ -129,28 +94,10 @@ export function configureHooks(cwd: string): void {
     }
   }
 
-  // ─── Hook configuration ───
-  if (!settings.hooks) {
-    settings.hooks = {};
-  }
-
-  for (const [event, hookConfig] of Object.entries(BOOKMARK_HOOKS)) {
-    if (!settings.hooks[event]) {
-      settings.hooks[event] = [];
-    }
-
-    const existingIdx = settings.hooks[event].findIndex(isBookmarkHook);
-
-    if (existingIdx === -1) {
-      // No existing bookmark hook — add the new one
-      settings.hooks[event].push(hookConfig);
-    } else {
-      // Replace existing bookmark hook (upgrades old prompt hooks to command hooks)
-      settings.hooks[event][existingIdx] = hookConfig;
-    }
-  }
-
-  writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+  // ─── Hook configuration (shared merge writer) ───
+  const { manifest, entries } = claudePlan();
+  const { merged } = mergeHookConfig(settings as HookConfig, manifest, entries);
+  writeJsonConfig(settingsPath, merged, { backup: false });
 }
 
 /**
@@ -178,36 +125,9 @@ export function configureGlobalHooks(): void {
     }
   }
 
-  if (!settings.hooks) {
-    settings.hooks = {};
-  }
-
-  let changed = false;
-  for (const [event, hookConfig] of Object.entries(BOOKMARK_HOOKS)) {
-    if (!settings.hooks[event]) {
-      settings.hooks[event] = [];
-    }
-
-    const existingIdx = settings.hooks[event].findIndex(isBookmarkHook);
-
-    if (existingIdx === -1) {
-      // No existing bookmark hook — append (don't replace user's other hooks)
-      settings.hooks[event].push(hookConfig);
-      changed = true;
-    } else {
-      // Update existing bookmark hook in place
-      const existing = JSON.stringify(settings.hooks[event][existingIdx]);
-      const updated = JSON.stringify(hookConfig);
-      if (existing !== updated) {
-        settings.hooks[event][existingIdx] = hookConfig;
-        changed = true;
-      }
-    }
-  }
-
-  if (changed) {
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-  }
+  const { manifest, entries } = claudePlan();
+  const { merged, changed } = mergeHookConfig(settings as HookConfig, manifest, entries);
+  if (changed) writeJsonConfig(settingsPath, merged, { backup: false });
 }
 
 /**

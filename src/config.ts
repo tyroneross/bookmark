@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmdirSync, statSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmdirSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { homedir } from 'node:os';
 import type { BookmarkConfig, SetupPreferences, StopMode } from './types.js';

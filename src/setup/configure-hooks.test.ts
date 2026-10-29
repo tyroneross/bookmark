@@ -38,7 +38,7 @@ describe('configureHooks', () => {
     expect(promptHooks).toHaveLength(1);
     expect(promptHooks[0].hooks).toEqual([{
       type: 'command',
-      command: 'npx @tyroneross/bookmark context-check 2>/dev/null || echo \'{}\'',
+      command: 'npx @tyroneross/bookmark context-check --host claude 2>/dev/null || echo \'{}\'',
       timeout: 10000,
     }]);
   });

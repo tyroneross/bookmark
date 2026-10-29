@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { captureSnapshot } from '../snapshot/capture.js';
-import { loadSnapshot, listSnapshots, readLatestMd, getSnapshotCount, ensureStorageDirs } from '../snapshot/storage.js';
+import { loadSnapshot, listSnapshots, readLatestMd, getSnapshotCount } from '../snapshot/storage.js';
 import { compressToMarkdown } from '../snapshot/compress.js';
 import { readContextMd } from '../trails/reader.js';
 import { restoreContext } from '../restore/index.js';
@@ -22,7 +22,6 @@ import { checkTimeInterval } from '../threshold/time-based.js';
 import {
   handledThresholdsForUsage,
   newlyCrossedThresholds,
-  readLatestContextUsage,
 } from '../threshold/token-usage.js';
 import { buildHandoffPrompt } from '../context/handoff-prompt.js';
 import { writeFileAtomic } from '../util/atomic-write.js';
@@ -39,11 +38,14 @@ import {
 } from '../handoff/lineage.js';
 import { decideStop, sealIfChanged } from '../handoff/stop.js';
 import { loadConfig, getStoragePath, resolveHookStorage, resolveStopMode, writeConfig, type HookStorage } from '../config.js';
-import { configureHooks } from '../setup/configure-hooks.js';
 import { ensureProjectBootstrapped, setupProject } from '../setup/auto-setup.js';
 import { findById, pruneStale, getLastProject, loadRegistry } from '../registry.js';
 import { parseIdentity } from '../trails/identity.js';
 import type { HookInput, SnapshotTrigger } from '../types.js';
+import { resolveAdapter, type HookAction, type HookEvent, type HostAdapter } from '../host/adapter.js';
+import { listHostIds, loadManifest, type Role } from '../host/manifest.js';
+import { DEFAULT_BIN, installHost } from '../host/install.js';
+import { refreshModelCatalog } from '../threshold/model-catalog.js';
 
 // Read the version from package.json so a release bump cannot drift from the
 // string the CLI reports. v0.2.0 shipped reporting '0.1.0' because this was
@@ -112,28 +114,28 @@ program
   .option('--session-source <source>', 'Source: startup|resume|compact|clear')
   .option('--format <format>', 'Output: system_message|json|markdown', 'system_message')
   .option('--cwd <path>', 'Working directory')
+  .option('--host <id>', 'Host dialect: claude|codex|gemini|copilot (default: detect from stdin)')
   .action(async (opts) => {
+    const hook = await readHook('restore', opts.host);
     try {
-      const hookInput = await readHookInput();
-      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
+      const { ev } = hook;
+      const cwd = opts.cwd ?? ev.cwd ?? process.cwd();
       // Same resolver as stop; restore may read a $HOME pointer but never creates storage there.
       const storage = hookStorage(cwd, true);
-      if (!storage) return;
-      const source = opts.sessionSource ?? hookInput?.source ?? 'startup';
+      if (!storage) return emitHook(hook, { kind: 'noop' });
+      const source = (opts.sessionSource ?? ev.source ?? 'startup') as RestoreSource;
 
       const result = restoreContext({
         source,
-        sessionId: hookInput?.session_id,
+        sessionId: ev.sessionId,
         cwd: storage.root,
         format: opts.format,
       });
 
-      // Output plain text for SessionStart hook — Claude sees stdout directly
-      if (result.systemMessage) {
-        console.log(result.systemMessage);
-      }
+      emitHook(hook, result.systemMessage ? { kind: 'inject', text: result.systemMessage } : { kind: 'noop' });
     } catch {
-      // Silent failure — don't break session start
+      // Never break session start
+      emitHook(hook, { kind: 'noop' });
     }
   });
 
@@ -188,21 +190,18 @@ program
   .description('Capture and notify when context usage crosses a token threshold')
   .option('--transcript <path>', 'Path to transcript JSONL')
   .option('--cwd <path>', 'Working directory')
+  .option('--host <id>', 'Host dialect: claude|codex|gemini|copilot (default: detect from stdin)')
   .action(async (opts) => {
+    const hook = await readHook('context-check', opts.host);
+    const noop = () => emitHook(hook, { kind: 'noop' });
     try {
-      const hookInput = await readHookInput();
-      const sessionId = hookInput?.session_id;
-      const transcriptPath = opts.transcript ?? hookInput?.transcript_path;
+      const { adapter, ev } = hook;
+      const sessionId = ev.sessionId;
+      const transcriptPath: string | undefined = opts.transcript ?? ev.transcriptPath;
       // Without a session id nothing can be attributed to a session: write nothing.
-      if (!sessionId || !transcriptPath) {
-        console.log(JSON.stringify({}));
-        return;
-      }
-      const storage = hookStorage(opts.cwd ?? hookInput?.cwd ?? process.cwd(), true);
-      if (!storage || storage.homePointer) {
-        console.log(JSON.stringify({}));
-        return;
-      }
+      if (!sessionId || !transcriptPath) return noop();
+      const storage = hookStorage(opts.cwd ?? ev.cwd ?? process.cwd(), true);
+      if (!storage || storage.homePointer) return noop();
       const { root: cwd, storagePath } = storage;
       const config = loadConfig(cwd);
       const paneId = currentPaneId();
@@ -213,12 +212,10 @@ program
       try { sealIfChanged({ storagePath, cwd, sessionId, paneId, pid }); } catch { /* best-effort */ }
       const state = loadSessionState(storagePath, sessionId);
       const timeCheck = checkTimeInterval(state);
-      const observation = readLatestContextUsage(
-        transcriptPath,
-        config.contextLimitTokens,
-        hookInput?.prompt,
-        sessionId
-      );
+      const observation = adapter.readUsage({ ...ev, transcriptPath }, {
+        contextLimitOverride: config.contextLimitTokens,
+        pendingPrompt: ev.prompt,
+      });
 
       if (!observation) {
         if (timeCheck.shouldSnapshot) {
@@ -226,11 +223,10 @@ program
             trigger: 'time_interval',
             transcriptPath,
             cwd,
-            sessionId: hookInput?.session_id,
+            sessionId,
           });
         }
-        console.log(JSON.stringify({}));
-        return;
+        return noop();
       }
 
       if (observation.status === 'unknown_context_limit') {
@@ -251,7 +247,7 @@ program
             trigger: 'time_interval',
             transcriptPath,
             cwd,
-            sessionId: hookInput?.session_id,
+            sessionId,
           });
           const refreshedState = loadSessionState(storagePath, sessionId);
           saveSessionState(storagePath, sessionId, {
@@ -269,17 +265,16 @@ program
         }
 
         if (shouldNotify) {
-          console.log(JSON.stringify({
+          return emitHook(hook, {
+            kind: 'notify',
             systemMessage:
               `Bookmark detected ${observation.model}, but its context limit is not verified. ` +
               'Token-threshold capture is paused for this model. ' +
               'Set the verified limit with `bookmark config --context-limit <tokens>`. ' +
               `Manual snapshots and ${state.snapshot_interval_minutes}-minute periodic snapshots remain active.`,
-          }));
-        } else {
-          console.log(JSON.stringify({}));
+          });
         }
-        return;
+        return noop();
       }
 
       const usage = observation;
@@ -312,7 +307,7 @@ program
             trigger: 'time_interval',
             transcriptPath,
             cwd,
-            sessionId: hookInput?.session_id,
+            sessionId,
           });
           const refreshedState = loadSessionState(storagePath, sessionId);
           saveSessionState(storagePath, sessionId, {
@@ -329,15 +324,14 @@ program
         } else {
           saveSessionState(storagePath, sessionId, observedState);
         }
-        console.log(JSON.stringify({}));
-        return;
+        return noop();
       }
 
       const snapshot = await captureSnapshot({
         trigger: 'token_threshold',
         transcriptPath,
         cwd,
-        sessionId: hookInput?.session_id,
+        sessionId,
         contextUsage: usage,
       });
 
@@ -357,8 +351,7 @@ program
 
       // A7/C7: the snapshot above is still captured but no prompt is injected.
       if (!handoffPrompts) {
-        console.log(JSON.stringify({}));
-        return;
+        return noop();
       }
 
       const threshold = crossed[crossed.length - 1];
@@ -373,19 +366,20 @@ program
         paneId,
       });
 
-      console.log(JSON.stringify({
+      const { agentName, newSessionHint } = adapter.manifest;
+      const estimated = usage.estimated ? ' (estimated)' : '';
+      emitHook(hook, {
+        kind: 'inject',
         systemMessage:
-          `Bookmark captured ${snapshot.snapshot_id} at ${usedPct}% of the ${usage.model} context window. ` +
-          'Bookmark asked Claude to update the handoff. Start a new session after this response to restore it.',
-        hookSpecificOutput: {
-          hookEventName: 'UserPromptSubmit',
-          additionalContext:
-            `${handoffPrompt}\nAfter successfully writing it, tell the user to start a new Claude session with /clear or by exiting and reopening Claude Code.`,
-        },
-      }));
+          `Bookmark captured ${snapshot.snapshot_id} at ${usedPct}%${estimated} of the ${usage.model} context window. ` +
+          (adapter.capabilities.injectOnPrompt
+            ? `Bookmark asked ${agentName} to update the handoff. Start a new session after this response to restore it.`
+            : 'Bookmark will ask for the handoff when this turn ends.'),
+        text: `${handoffPrompt}\nAfter successfully writing it, tell the user to ${newSessionHint}.`,
+      });
     } catch {
       // Context protection must never block the user's prompt.
-      console.log(JSON.stringify({}));
+      noop();
     }
   });
 
@@ -393,29 +387,30 @@ program
   .command('stop')
   .description('Stop hook — capture files, conditionally block for the session handoff (for Stop hook)')
   .option('--cwd <path>', 'Working directory')
+  .option('--host <id>', 'Host dialect: claude|codex|gemini|copilot (default: detect from stdin)')
   .action(async (opts) => {
+    const hook = await readHook('stop', opts.host);
+    const approve = () => emitHook(hook, { kind: 'noop' });
     try {
-      const hookInput = await readHookInput();
-      const sessionId = hookInput?.session_id;
+      const { adapter, ev } = hook;
+      const sessionId = ev.sessionId;
       // Without a session id there is no per-session handoff to ask for: approve, write nothing.
       if (!sessionId) {
-        console.log(JSON.stringify({ decision: 'approve' }));
-        return;
+        return approve();
       }
-      const cwd = opts.cwd ?? hookInput?.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+      const cwd = opts.cwd ?? ev.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
       // Stop fires at the end of every turn and cwd moves with the agent, so
       // never bootstrap storage here: resolve the repo root (or an existing
       // .bookmark/ ancestor) and do nothing when there is none or it is $HOME.
       const storage = resolveHookStorage(cwd);
       if (!storage || storage.homePointer) {
-        console.log(JSON.stringify({ decision: 'approve' }));
-        return;
+        return approve();
       }
       const { root, storagePath } = storage;
       const config = loadConfig(root);
 
       // Mechanical file-tracking snapshot on every turn end (best-effort).
-      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(cwd);
+      const transcriptPath = ev.transcriptPath ?? discoverTranscriptPath(cwd);
       if (transcriptPath) {
         try {
           await captureSnapshot({
@@ -432,10 +427,15 @@ program
 
       const paneId = currentPaneId();
       // Same transcript measurement as context-check; unmeasurable = below threshold.
+      // Hosts without prompt-time injection (degrade by capability) are measured here.
       let contextUsedFraction: number | null = null;
+      let estimated = '';
       if (transcriptPath) {
-        const observation = readLatestContextUsage(transcriptPath, config.contextLimitTokens, '', sessionId);
-        if (observation?.status === 'measured') contextUsedFraction = observation.usedFraction;
+        const observation = adapter.readUsage({ ...ev, transcriptPath }, { contextLimitOverride: config.contextLimitTokens });
+        if (observation?.status === 'measured') {
+          contextUsedFraction = observation.usedFraction;
+          if (observation.estimated) estimated = ' (estimated)';
+        }
       }
 
       // Per-session handoff, seal and once-per-session block (A6/A7).
@@ -452,8 +452,7 @@ program
         stopThreshold: config.tokenThresholds[0],
       });
       if (decision.decision === 'approve') {
-        console.log(JSON.stringify({ decision: 'approve' }));
-        return;
+        return approve();
       }
 
       try {
@@ -464,19 +463,20 @@ program
       const handoffPrompt = buildHandoffPrompt({
         cwd: root,
         reason: contextUsedFraction !== null
-          ? `Context usage is at ${Math.round(contextUsedFraction * 100)}% and this session has no fresh handoff.`
+          ? `Context usage is at ${Math.round(contextUsedFraction * 100)}%${estimated} and this session has no fresh handoff.`
           : 'The session is stopping and needs a durable handoff.',
         handoffPath: decision.handoffPath,
         sessionId,
         paneId,
       });
-      console.log(JSON.stringify({
-        decision: 'block',
+      const { agentName } = adapter.manifest;
+      emitHook(hook, {
+        kind: 'block-stop',
         reason: handoffPrompt,
         systemMessage: contextUsedFraction !== null
-          ? `Bookmark asked Claude to refresh the session handoff (context at ${Math.round(contextUsedFraction * 100)}%). It asks once per session.`
-          : 'Bookmark asked Claude to refresh the session handoff. It asks once per session.',
-      }));
+          ? `Bookmark asked ${agentName} to refresh the session handoff (context at ${Math.round(contextUsedFraction * 100)}%${estimated}). It asks once per session.`
+          : `Bookmark asked ${agentName} to refresh the session handoff. It asks once per session.`,
+      });
     } catch (err) {
       // Log error for debugging, then approve to never block stop
       try {
@@ -485,7 +485,7 @@ program
           appendFileSync(join(storage.storagePath, '.errors.log'), `[${new Date().toISOString()}] stop: ${(err as Error).message}\n`);
         }
       } catch { /* truly silent */ }
-      console.log(JSON.stringify({ decision: 'approve' }));
+      approve();
     }
   });
 
@@ -493,36 +493,37 @@ program
   .command('precompact')
   .description('PreCompact hook — capture a mechanical checkpoint')
   .option('--cwd <path>', 'Working directory')
+  .option('--host <id>', 'Host dialect: claude|codex|gemini|copilot (default: detect from stdin)')
   .action(async (opts) => {
+    const hook = await readHook('precompact', opts.host);
     try {
-      const hookInput = await readHookInput();
-      const rawCwd = opts.cwd ?? hookInput?.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+      const { ev } = hook;
+      const rawCwd = opts.cwd ?? ev.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
       const storage = hookStorage(rawCwd, true);
       if (!storage || storage.homePointer) {
-        console.log(JSON.stringify({}));
-        return;
+        return emitHook(hook, { kind: 'noop' });
       }
       const cwd = storage.root;
 
       // Always capture file tracking snapshot
-      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(rawCwd);
+      const transcriptPath = ev.transcriptPath ?? discoverTranscriptPath(rawCwd);
       if (transcriptPath) {
         try {
           await captureSnapshot({
             trigger: 'pre_compact',
             transcriptPath,
             cwd,
-            sessionId: hookInput?.session_id ?? process.env.CLAUDE_SESSION_ID,
+            sessionId: ev.sessionId ?? process.env.CLAUDE_SESSION_ID,
           });
         } catch { /* file tracking is best-effort */ }
       }
 
       // Claude Code discards PreCompact systemMessage output. The synchronous
       // 75% UserPromptSubmit hook is the semantic-handoff activation path.
-      console.log(JSON.stringify({}));
+      emitHook(hook, { kind: 'noop' });
     } catch {
       // Never block compaction
-      console.log(JSON.stringify({}));
+      emitHook(hook, { kind: 'noop' });
     }
   });
 
@@ -935,6 +936,68 @@ program
     }
   });
 
+// ─── Multi-host install ───
+
+program
+  .command('install')
+  .description('Write (or print with --dry-run) one agent host\'s hook config from hosts/<id>.json')
+  .requiredOption('--host <id>', `Host id: ${listHostIds().join('|')}`)
+  .option('--dry-run', 'Print the merged config and the Bookmark fragment; write nothing')
+  .option('--bin <cmd>', 'Command hooks run to reach Bookmark', DEFAULT_BIN)
+  .action((opts) => {
+    const manifest = loadManifest(opts.host);
+    if (!manifest) {
+      console.error(`Unknown host '${opts.host}'. Known: ${listHostIds().join(', ')}`);
+      process.exitCode = 2;
+      return;
+    }
+    let result;
+    try {
+      result = installHost(manifest, { bin: opts.bin, dryRun: Boolean(opts.dryRun) });
+    } catch (err) {
+      console.error(`bookmark install: ${(err as Error).message}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (result.compat.status === 'unavailable') {
+      console.error(`warning: event names not validated — ${result.compat.message}`);
+    }
+    if (result.compat.status === 'invalid') {
+      console.error(`bookmark install refused: ${result.compat.message}`);
+      process.exitCode = 1;
+      return;
+    }
+    if (result.dryRun) {
+      console.log(`# ${manifest.name}: ${result.path} (${result.changed ? 'would change' : 'already up to date'})`);
+      console.log('# Bookmark fragment:');
+      console.log(JSON.stringify(result.fragment, null, 2));
+      console.log('# Merged file:');
+      console.log(JSON.stringify(result.merged, null, 2));
+      return;
+    }
+    if (!result.changed) {
+      console.log(`${manifest.name}: ${result.path} already has Bookmark's hooks; nothing written.`);
+      return;
+    }
+    console.log(`${manifest.name}: wrote Bookmark hooks to ${result.path}`);
+    if (result.backupPath) console.log(`  Backup: ${result.backupPath}`);
+  });
+
+program
+  .command('catalog')
+  .description('Model context-window catalog (models.dev) used when a host does not report the window')
+  .command('refresh')
+  .description('Download https://models.dev/api.json into the local cache (BOOKMARK_MODEL_CATALOG)')
+  .action(async () => {
+    try {
+      const { path, providers } = await refreshModelCatalog();
+      console.log(`Cached ${providers} providers at ${path}`);
+    } catch (err) {
+      console.error(`catalog refresh failed: ${(err as Error).message}`);
+      process.exitCode = 1;
+    }
+  });
+
 // ─── Per-session handoff (A8) ───
 
 const handoffCommand = program
@@ -1130,7 +1193,6 @@ function normalizeThreshold(value: number): number | null {
 }
 
 const GREEN = '\x1b[32m';
-const CYAN = '\x1b[36m';
 const DIM = '\x1b[2m';
 const BOLD = '\x1b[1m';
 const RESET = '\x1b[0m';
@@ -1259,8 +1321,32 @@ async function runSetup(cwd: string, useDefaults: boolean): Promise<void> {
   console.log('');
 }
 
+type RestoreSource = 'startup' | 'resume' | 'compact' | 'clear';
+
+interface HookCall {
+  adapter: HostAdapter;
+  ev: HookEvent;
+}
+
 /**
- * Read hook input from stdin (JSON piped by Claude Code hooks).
+ * Read one hook call: raw stdin JSON, then the host adapter (`--host` first,
+ * stdin sniffing as fallback) normalizes it so the core never sees host fields.
+ */
+async function readHook(role: Role, explicitHost?: string): Promise<HookCall> {
+  const raw = await readHookInput();
+  const stdin = raw && typeof raw === 'object' ? raw as unknown as Record<string, unknown> : null;
+  const { adapter, warning } = resolveAdapter(stdin, explicitHost);
+  if (warning) console.error(warning);
+  return { adapter, ev: adapter.normalize(stdin ?? {}, role) };
+}
+
+function emitHook(call: HookCall, action: HookAction): void {
+  const { stdout } = call.adapter.emit(call.ev, action);
+  if (stdout) console.log(stdout);
+}
+
+/**
+ * Read hook input from stdin (JSON piped by agent host hooks).
  */
 async function readHookInput(): Promise<HookInput | null> {
   // Check if stdin has data (non-TTY means piped)

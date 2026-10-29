@@ -1,0 +1,6 @@
+{"type": "session.start", "data": {"sessionId": "fixture-copilot-0001"}}
+{"type": "user.message", "data": {"content": "one"}}
+{"type": "assistant.message", "data": {"content": "ok"}}
+{"type": "user.message", "data": {"content": "two"}}
+{"type": "assistant.message", "data": {"content": "ok"}}
+{"type": "user.message", "data": {"content": "three"}}

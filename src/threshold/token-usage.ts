@@ -1,4 +1,5 @@
 import { closeSync, existsSync, fstatSync, openSync, readSync } from 'node:fs';
+import { lookupCatalogContextWindow } from './model-catalog.js';
 
 const MAX_TAIL_BYTES = 4 * 1024 * 1024;
 // Source for model context limits:
@@ -11,6 +12,9 @@ interface RawUsage {
   output_tokens?: unknown;
 }
 
+/** transcript_usage: measured from the host transcript; turn_estimate: turns × tokens-per-turn (estimated). */
+export type UsageSource = 'transcript_usage' | 'turn_estimate';
+
 export interface ContextUsage {
   status: 'measured';
   model: string;
@@ -18,27 +22,50 @@ export interface ContextUsage {
   contextLimitTokens: number;
   usedFraction: number;
   remainingFraction: number;
-  source: 'transcript_usage';
+  source: UsageSource;
+  /** True when usedTokens is a heuristic, not a host-reported count. */
+  estimated?: boolean;
 }
 
 export interface UnknownContextLimitUsage {
   status: 'unknown_context_limit';
   model: string;
   usedTokens: number;
-  source: 'transcript_usage';
+  source: UsageSource;
+  estimated?: boolean;
 }
 
 export type ContextUsageObservation = ContextUsage | UnknownContextLimitUsage;
 
 /**
- * Resolve the context limit for models observed in Claude Code transcripts.
- * An explicit override wins so users can handle provider/model changes without
- * waiting for a Bookmark release. Unknown models return null so Bookmark can
- * ask for a verified limit instead of guessing.
+ * Context window for a model, in the order of docs/research/2026-10-28 §10:
+ *   1. explicit override (`BOOKMARK_CONTEXT_LIMIT` / `contextLimitTokens`)
+ *   2. window the host reported in its transcript or hook payload
+ *   3. cached models.dev catalog (`bookmark catalog refresh`; never fetched from a hook)
+ *   4. built-in table (`builtInContextLimit`)
+ *   5. null — unknown; Bookmark asks for a verified limit instead of guessing.
  */
-export function resolveContextLimit(model: string, override?: number): number | null {
-  if (override && Number.isFinite(override) && override > 0) return override;
+export function resolveContextWindow(
+  model: string,
+  options: { override?: number; reported?: number; catalogPath?: string } = {}
+): number | null {
+  if (isPositive(options.override)) return options.override;
+  if (isPositive(options.reported)) return options.reported;
+  const fromCatalog = model ? lookupCatalogContextWindow(normalizeModelId(model), options.catalogPath) : null;
+  if (fromCatalog !== null) return fromCatalog;
+  return builtInContextLimit(model);
+}
 
+/** Back-compat wrapper: override, then catalog, then built-in table. */
+export function resolveContextLimit(model: string, override?: number): number | null {
+  return resolveContextWindow(model, { override });
+}
+
+/**
+ * Offline fallback table — the only place model window sizes are written down.
+ * Source: https://platform.claude.com/docs/en/build-with-claude/context-windows
+ */
+function builtInContextLimit(model: string): number | null {
   const normalized = normalizeModelId(model);
   const hasOneMillionContext = [
     /^claude-(?:opus|sonnet|fable|mythos)-5(?:-|$)/,
@@ -67,26 +94,9 @@ export function readLatestContextUsage(
   pendingPrompt = '',
   sessionId?: string
 ): ContextUsageObservation | null {
-  if (!existsSync(transcriptPath)) return null;
-
-  let fd: number | undefined;
+  const lines = readTailLines(transcriptPath);
+  if (!lines) return null;
   try {
-    fd = openSync(transcriptPath, 'r');
-    const size = fstatSync(fd).size;
-    if (size === 0) return null;
-
-    const bytesToRead = Math.min(size, MAX_TAIL_BYTES);
-    const start = size - bytesToRead;
-    const buffer = Buffer.alloc(bytesToRead);
-    readSync(fd, buffer, 0, bytesToRead, start);
-
-    let text = buffer.toString('utf8');
-    if (start > 0) {
-      const firstNewline = text.indexOf('\n');
-      text = firstNewline >= 0 ? text.slice(firstNewline + 1) : '';
-    }
-
-    const lines = text.split('\n');
     // Codex rollouts: the newest token_count event carries usage and the
     // model's own context window; turn_context records carry the model name.
     let codexUsage: ContextUsageObservation | null = null;
@@ -157,11 +167,145 @@ export function readLatestContextUsage(
     if (codexUsage) return codexUsage;
   } catch {
     return null;
-  } finally {
-    if (fd !== undefined) closeSync(fd);
   }
 
   return null;
+}
+
+/** Last ≤4 MiB of a JSONL file, split into lines (a partial first line is dropped). Null if missing/empty. */
+function readTailLines(path: string): string[] | null {
+  if (!existsSync(path)) return null;
+  let fd: number | undefined;
+  try {
+    fd = openSync(path, 'r');
+    const size = fstatSync(fd).size;
+    if (size === 0) return null;
+    const bytesToRead = Math.min(size, MAX_TAIL_BYTES);
+    const start = size - bytesToRead;
+    const buffer = Buffer.alloc(bytesToRead);
+    readSync(fd, buffer, 0, bytesToRead, start);
+    let text = buffer.toString('utf8');
+    if (start > 0) {
+      const firstNewline = text.indexOf('\n');
+      text = firstNewline >= 0 ? text.slice(firstNewline + 1) : '';
+    }
+    return text.split('\n');
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
+function observation(
+  model: string,
+  usedTokens: number,
+  contextLimitTokens: number | null,
+  source: UsageSource,
+  estimated: boolean
+): ContextUsageObservation {
+  const extra = estimated ? { estimated: true } : {};
+  if (contextLimitTokens === null) {
+    return { status: 'unknown_context_limit', model, usedTokens, source, ...extra };
+  }
+  const usedFraction = Math.min(usedTokens / contextLimitTokens, 1);
+  return {
+    status: 'measured',
+    model,
+    usedTokens,
+    contextLimitTokens,
+    usedFraction,
+    remainingFraction: Math.max(0, 1 - usedFraction),
+    source,
+    ...extra,
+  };
+}
+
+/**
+ * Gemini CLI session records (`~/.gemini/tmp/<project_hash>/chats/`). The docs
+ * say chats record token usage but publish no schema [INFERRED]: this accepts a
+ * `tokens` object ({input, output, cached, thoughts, tool, total}) or the Gemini
+ * API `usageMetadata` ({promptTokenCount, candidatesTokenCount, ...}) on the
+ * record or its `message`, with the model in `model`. Cached tokens are already
+ * inside the input/prompt count, so they are not added again. No window is
+ * recorded, so the window comes from override → catalog → table.
+ */
+export function readGeminiContextUsage(
+  transcriptPath: string,
+  contextLimitOverride?: number,
+  pendingPrompt = '',
+  sessionId?: string
+): ContextUsageObservation | null {
+  const lines = readTailLines(transcriptPath);
+  if (!lines) return null;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index].trim();
+    if (!line) continue;
+    try {
+      const record = JSON.parse(line) as Record<string, unknown>;
+      if (sessionId && typeof record.sessionId === 'string' && record.sessionId !== sessionId) continue;
+      const message = isRecord(record.message) ? record.message : record;
+      const model = typeof message.model === 'string' ? message.model
+        : typeof record.model === 'string' ? record.model : null;
+      let usedTokens = 0;
+      if (isRecord(message.tokens)) {
+        usedTokens = tokenCount(message.tokens.input) + tokenCount(message.tokens.output);
+      } else if (isRecord(message.usageMetadata)) {
+        usedTokens = tokenCount(message.usageMetadata.promptTokenCount) + tokenCount(message.usageMetadata.candidatesTokenCount);
+      }
+      if (!model || usedTokens <= 0) continue;
+      usedTokens += promptEstimateTokens(pendingPrompt);
+      return observation(model, usedTokens, resolveContextWindow(model, { override: contextLimitOverride }), 'transcript_usage', false);
+    } catch {
+      // Skip malformed or partial JSONL lines.
+    }
+  }
+  return null;
+}
+
+/** Default tokens per user turn for the turn-count estimate (`BOOKMARK_TOKENS_PER_TURN` overrides). */
+export const DEFAULT_TOKENS_PER_TURN = 4000;
+
+/**
+ * For hosts whose transcript format is undocumented (Copilot CLI): count user
+ * turns and multiply by a per-turn budget. Always labelled `estimated`. A turn
+ * is a JSONL record whose `type` contains "user" or whose `role` is "user"
+ * [INFERRED]. The window comes from override → catalog (if the model is known)
+ * → table; with none, the result is `unknown_context_limit`.
+ */
+export function estimateContextUsageFromTurns(
+  transcriptPath: string,
+  options: { override?: number; model?: string; tokensPerTurn?: number } = {}
+): ContextUsageObservation | null {
+  const lines = readTailLines(transcriptPath);
+  if (!lines) return null;
+  let turns = 0;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    try {
+      const record = JSON.parse(line) as Record<string, unknown>;
+      const data = isRecord(record.data) ? record.data : record;
+      const type = typeof record.type === 'string' ? record.type.toLowerCase() : '';
+      const role = typeof data.role === 'string' ? data.role.toLowerCase() : '';
+      if (role === 'user' || /(^|[._])user([._]|$)/.test(type)) turns += 1;
+    } catch {
+      // Skip malformed or partial JSONL lines.
+    }
+  }
+  if (turns === 0) return null;
+  const perTurn = isPositive(options.tokensPerTurn) ? options.tokensPerTurn : DEFAULT_TOKENS_PER_TURN;
+  const model = options.model ?? 'unknown';
+  const window = resolveContextWindow(options.model ?? '', { override: options.override });
+  return observation(model, turns * perTurn, window, 'turn_estimate', true);
+}
+
+function promptEstimateTokens(pendingPrompt: string): number {
+  return pendingPrompt ? Math.ceil(Buffer.byteLength(pendingPrompt, 'utf8') / 4) : 0;
+}
+
+function isPositive(value: number | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
 }
 
 /**
@@ -181,23 +325,9 @@ function readCodexTokenCount(
   const usedTokens = tokenCount(last.input_tokens) + tokenCount(last.output_tokens) + promptEstimate;
   if (usedTokens <= 0) return null;
   const model = 'codex';
-  const window = tokenCount(info.model_context_window);
-  const contextLimitTokens = contextLimitOverride && Number.isFinite(contextLimitOverride) && contextLimitOverride > 0
-    ? contextLimitOverride
-    : window > 0 ? window : null;
-  if (contextLimitTokens === null) {
-    return { status: 'unknown_context_limit', model, usedTokens, source: 'transcript_usage' };
-  }
-  const usedFraction = Math.min(usedTokens / contextLimitTokens, 1);
-  return {
-    status: 'measured',
-    model,
-    usedTokens,
-    contextLimitTokens,
-    usedFraction,
-    remainingFraction: Math.max(0, 1 - usedFraction),
-    source: 'transcript_usage',
-  };
+  const reported = tokenCount(info.model_context_window);
+  const contextLimitTokens = resolveContextWindow(model, { override: contextLimitOverride, reported });
+  return observation(model, usedTokens, contextLimitTokens, 'transcript_usage', false);
 }
 
 export function newlyCrossedThresholds(

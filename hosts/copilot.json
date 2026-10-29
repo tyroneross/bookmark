@@ -1,0 +1,49 @@
+{
+  "id": "copilot",
+  "name": "GitHub Copilot CLI",
+  "agentName": "Copilot",
+  "newSessionHint": "start a new Copilot CLI session by exiting and reopening it",
+  "source": "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-hooks-reference (fetched 2026-10-28); docs/research/2026-10-28-multi-host-support.md section 3",
+  "detectPriority": 20,
+  "detect": {
+    "anyKeys": ["sessionId"],
+    "transcriptPathIncludes": ["/.copilot/"]
+  },
+  "config": {
+    "path": "~/.copilot/hooks/bookmark.json",
+    "layout": "flat",
+    "matcher": null,
+    "fileVersion": 1,
+    "commandKey": "bash",
+    "timeoutKey": "timeoutSec",
+    "timeouts": { "restore": 5, "precompact": 10, "stop": 10 }
+  },
+  "events": {
+    "restore": "sessionStart",
+    "precompact": "preCompact",
+    "stop": "agentStop"
+  },
+  "fields": {
+    "sessionId": ["sessionId", "session_id"],
+    "transcriptPath": ["transcriptPath", "transcript_path"],
+    "cwd": ["cwd"],
+    "model": ["model"],
+    "prompt": ["prompt"],
+    "source": ["source"],
+    "stopHookActive": ["stop_hook_active", "stopHookActive"]
+  },
+  "output": {
+    "restore": "additionalContext",
+    "inject": "additionalContext",
+    "blockDecision": "block",
+    "systemMessage": false,
+    "noop": { "stop": {}, "default": {} }
+  },
+  "usage": "turn-estimate",
+  "capabilities": {
+    "injectOnPrompt": false,
+    "blockStop": true,
+    "usageInTranscript": false,
+    "windowInTranscript": false
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "sessionId": "fixture-copilot-0001",
+  "timestamp": "2026-01-01T00:00:00.000Z",
+  "cwd": "__CWD__",
+  "transcriptPath": "__TRANSCRIPT__",
+  "stopReason": "end_turn",
+  "stop_hook_active": false
+}

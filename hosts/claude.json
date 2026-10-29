@@ -1,0 +1,47 @@
+{
+  "id": "claude",
+  "name": "Claude Code",
+  "agentName": "Claude",
+  "newSessionHint": "start a new Claude session with /clear or by exiting and reopening Claude Code",
+  "source": "https://code.claude.com/docs/en/hooks; docs/research/2026-10-28-multi-host-support.md",
+  "detectPriority": 100,
+  "detect": {},
+  "config": {
+    "path": "~/.claude/settings.json",
+    "layout": "grouped",
+    "matcher": "",
+    "fileVersion": null,
+    "commandKey": "command",
+    "timeoutKey": "timeout",
+    "timeouts": { "restore": 5000, "context-check": 10000, "precompact": 10000, "stop": 10000 }
+  },
+  "events": {
+    "restore": "SessionStart",
+    "context-check": "UserPromptSubmit",
+    "precompact": "PreCompact",
+    "stop": "Stop"
+  },
+  "fields": {
+    "sessionId": ["session_id"],
+    "transcriptPath": ["transcript_path"],
+    "cwd": ["cwd"],
+    "model": ["model"],
+    "prompt": ["prompt"],
+    "source": ["source"],
+    "stopHookActive": ["stop_hook_active"]
+  },
+  "output": {
+    "restore": "text",
+    "inject": "hookSpecificOutput",
+    "blockDecision": "block",
+    "systemMessage": true,
+    "noop": { "stop": { "decision": "approve" }, "default": {} }
+  },
+  "usage": "transcript-jsonl",
+  "capabilities": {
+    "injectOnPrompt": true,
+    "blockStop": true,
+    "usageInTranscript": true,
+    "windowInTranscript": false
+  }
+}
