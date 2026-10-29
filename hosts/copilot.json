@@ -21,7 +21,7 @@
     "commandKey": "bash",
     "timeoutKey": "timeoutSec",
     "timeouts": {
-      "restore": 5,
+      "restore": 15,
       "precompact": 10,
       "stop": 10
     }

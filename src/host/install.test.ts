@@ -5,11 +5,15 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadManifest } from './manifest.js';
-import { DEFAULT_BIN, hookCommand, installHost, mergeHookConfig, planEntries, readJsonConfig, removeBookmarkHooks, writeJsonConfig } from './install.js';
+import { reportSkippedHooks } from '../setup/auto-setup.js';
+import { vi } from 'vitest';
+import { DEFAULT_BIN, PINNED_BIN, defaultBin, hookCommand, pluginHooksConfig, installHost, mergeHookConfig, planEntries, readJsonConfig, removeBookmarkHooks, writeJsonConfig } from './install.js';
 import { configureGlobalHooks } from '../setup/configure-hooks.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const temps: string[] = [];
+// Backups go to ~/.bookmark/backups; keep them out of the real home.
+process.env.HOME = mkdtempSync(join(tmpdir(), 'bookmark-install-home-'));
 
 afterEach(() => {
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -71,11 +75,13 @@ describe('audit round 1: writer safety', () => {
     const path = join(dir, 'settings.json');
     writeFileSync(path, '{}');
     chmodSync(path, 0o600);
-    const backup = writeJsonConfig(path, { a: 1 });
+    const backupDir = join(dir, 'backups');
+    const backup = writeJsonConfig(path, { a: 1 }, { backupDir });
     expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(statSync(backup!).mode & 0o777).toBe(0o600);
+    expect(dirname(backup!)).toBe(backupDir);
     const fresh = join(dir, 'new', 'hooks.json');
-    writeJsonConfig(fresh, { b: 1 });
+    writeJsonConfig(fresh, { b: 1 }, { backupDir });
     expect(statSync(fresh).mode & 0o777).toBe(0o600);
   });
 
@@ -86,7 +92,7 @@ describe('audit round 1: writer safety', () => {
     writeFileSync(target, '{}');
     chmodSync(target, 0o640);
     symlinkSync(target, link);
-    writeJsonConfig(link, { c: 1 });
+    writeJsonConfig(link, { c: 1 }, { backupDir: join(dir, 'backups') });
     expect(JSON.parse(readFileSync(target, 'utf-8'))).toEqual({ c: 1 });
     expect(execFileSync('readlink', [link], { encoding: 'utf-8' }).trim()).toBe(target);
     expect(statSync(target).mode & 0o777).toBe(0o640);
@@ -115,9 +121,19 @@ describe('audit round 1: writer safety', () => {
     expect(readdirSync(dirname(claudePath))).toEqual(['settings.json']);
   });
 
-  it('H5: the default command is npx -y pinned to this package version', () => {
+  it('H5/N2: installed copies pin npx to their version; a git checkout or npm link uses its own build', () => {
     const version = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf-8')).version;
-    expect(DEFAULT_BIN).toBe(`npx -y @tyroneross/bookmark@${version}`);
+    expect(PINNED_BIN).toBe(`npx -y @tyroneross/bookmark@${version}`);
+    const installed = join(temp(), 'node_modules', '@tyroneross', 'bookmark');
+    mkdirSync(installed, { recursive: true });
+    expect(defaultBin(installed)).toEqual({ bin: PINNED_BIN, source: 'pinned-npx' });
+    const checkout = temp();
+    expect(defaultBin(checkout)).toEqual({ bin: `node ${join(checkout, 'dist', 'cli', 'index.js')}`, source: 'local-build' });
+    const gitInsideNodeModules = join(temp(), 'node_modules', 'pkg');
+    mkdirSync(join(gitInsideNodeModules, '.git'), { recursive: true });
+    expect(defaultBin(gitInsideNodeModules).source).toBe('local-build');
+    // This repo is a checkout, so the default here is the local build.
+    expect(DEFAULT_BIN).toBe(`node ${join(repoRoot, 'dist', 'cli', 'index.js')}`);
   });
 
   it('M1: --bin with shell metacharacters is rejected', () => {
@@ -127,3 +143,60 @@ describe('audit round 1: writer safety', () => {
   });
 });
 
+
+describe('audit round 3', () => {
+  const codex = () => loadManifest('codex')!;
+  const userHooks = [
+    { type: 'command', command: 'npm run check 2>/dev/null || true' },
+    { type: 'command', command: 'docker compose stop 2>/dev/null || true' },
+  ];
+
+  it('N1: user hooks shaped like ours but without --host survive install and uninstall', () => {
+    const existing = { hooks: { Stop: [{ hooks: [...userHooks] }] } };
+    const installed = mergeHookConfig(existing, codex(), planEntries(codex())).merged;
+    const stop = installed.hooks!.Stop as Array<{ hooks: unknown[] }>;
+    expect(stop.flatMap(g => g.hooks)).toEqual(expect.arrayContaining(userHooks));
+    const removed = removeBookmarkHooks(installed, 'grouped').merged;
+    expect(removed.hooks!.Stop).toEqual([{ hooks: userHooks }]);
+  });
+
+  it('N3: backups land in ~/.bookmark/backups/<host>/ (0700 dir, 0600 file), not beside the real file', () => {
+    const home = temp();
+    const manifest = codex();
+    const path = join(home, '.codex', 'hooks.json');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, '{}');
+    chmodSync(path, 0o644);
+    const result = installHost(manifest, { home, env: { BOOKMARK_COMPAT_BIN: join(home, 'absent') } });
+    expect(dirname(result.backupPath!)).toBe(join(home, '.bookmark', 'backups', 'codex'));
+    expect(statSync(result.backupPath!).mode & 0o777).toBe(0o600);
+    expect(statSync(dirname(result.backupPath!)).mode & 0o777).toBe(0o700);
+    expect(readdirSync(dirname(path))).toEqual(['hooks.json']);
+    expect(statSync(path).mode & 0o777).toBe(0o644);
+  });
+
+  it('N3: a dangling symlink is refused and left as a link', () => {
+    const dir = temp();
+    const link = join(dir, 'settings.json');
+    symlinkSync(join(dir, 'missing.json'), link);
+    expect(() => writeJsonConfig(link, { a: 1 }, { backupDir: join(dir, 'b') })).toThrow(/symlink to a missing file/);
+    expect(execFileSync('readlink', [link], { encoding: 'utf-8' }).trim()).toBe(join(dir, 'missing.json'));
+  });
+
+  it('N4: the shared plugin hooks file falls back to {} at Stop (valid for Claude and Codex)', () => {
+    const stop = (pluginHooksConfig(loadManifest('claude')!).hooks!.Stop as Array<{ hooks: Array<{ command: string }> }>)[0].hooks[0].command;
+    expect(stop.endsWith("|| echo '{}'")).toBe(true);
+  });
+
+  it('H2 gap: skipped hook setup on malformed settings prints one stderr line', () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      reportSkippedHooks(new Error('/x/settings.json is not valid JSON (oops); left it untouched'));
+      reportSkippedHooks(new Error('some other failure'));
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(String(spy.mock.calls[0][0])).toContain('bookmark: hooks skipped');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});

@@ -61,7 +61,9 @@ describe('host manifests', () => {
     for (const id of ['claude', 'codex']) {
       const m = loadManifest(id)!;
       expect(m.config.timeoutKey).toBe('timeout');
-      for (const value of Object.values(m.config.timeouts!)) expect(value).toBeGreaterThanOrEqual(5), expect(value).toBeLessThanOrEqual(10);
+      const { restore, ...rest } = m.config.timeouts!;
+      expect(restore).toBe(15);
+      for (const value of Object.values(rest)) expect(value).toBeGreaterThanOrEqual(5), expect(value).toBeLessThanOrEqual(10);
     }
     expect(loadManifest('copilot')!.config.timeoutKey).toBe('timeoutSec');
   });
@@ -210,7 +212,8 @@ describe('install merge writer', () => {
 
     const second = installHost(manifest, { home, env: env(compat) });
     expect(second.changed).toBe(false);
-    expect(readdirSync(dirname(path)).filter(f => f.includes('bookmark-backup'))).toHaveLength(1);
+    expect(readdirSync(join(home, '.bookmark', 'backups', 'codex'))).toHaveLength(1);
+    expect(readdirSync(dirname(path))).toEqual(['hooks.json']);
   });
 
   it('dry-run writes nothing', () => {

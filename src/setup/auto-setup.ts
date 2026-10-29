@@ -149,6 +149,14 @@ export function isProjectConfigured(cwd: string): boolean {
  * Creates storage dirs, configures hooks, injects gitignore and CLAUDE.md.
  * Returns list of steps completed. Silent (no console output) — caller decides output.
  */
+/** One stderr line when hook setup was skipped because a settings file could not be parsed; other errors stay silent. */
+export function reportSkippedHooks(err: unknown): void {
+  const message = err instanceof Error ? err.message : String(err);
+  if (/not valid JSON|not a JSON object|symlink to a missing file|not a regular file/.test(message)) {
+    console.error(`bookmark: hooks skipped — ${message}`);
+  }
+}
+
 export function setupProject(cwd: string): string[] {
   const steps: string[] = [];
 
@@ -165,7 +173,9 @@ export function setupProject(cwd: string): string[] {
   try {
     configureHooks(cwd);
     steps.push('Configured 4 hooks (PreCompact, SessionStart, UserPromptSubmit, Stop)');
-  } catch { /* silently skip */ }
+  } catch (err) {
+    reportSkippedHooks(err);
+  }
 
   // 3. Add .bookmark/ to .gitignore
   try {
@@ -291,7 +301,9 @@ function autoSetup(): void {
   try {
     configureGlobalHooks();
     steps.push('Registered hooks globally (SessionStart, Stop, PreCompact, UserPromptSubmit)');
-  } catch { /* silent */ }
+  } catch (err) {
+    reportSkippedHooks(err);
+  }
 
   // 2. Plugin symlink + registry for skill/command discovery
   try {

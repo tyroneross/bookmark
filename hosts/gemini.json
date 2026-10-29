@@ -23,7 +23,7 @@
     "commandKey": "command",
     "timeoutKey": "timeout",
     "timeouts": {
-      "restore": 5000,
+      "restore": 15000,
       "context-check": 10000,
       "precompact": 10000,
       "stop": 10000

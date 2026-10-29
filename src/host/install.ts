@@ -1,7 +1,7 @@
-import { chmodSync, copyFileSync, existsSync, lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeFileAtomic } from '../util/atomic-write.js';
 import { ROLES, type HostManifest, type Role } from './manifest.js';
@@ -15,10 +15,15 @@ import { ROLES, type HostManifest, type Role } from './manifest.js';
 
 export const PACKAGE_NAME = '@tyroneross/bookmark';
 
-function packageVersion(): string {
+/** `--bin` must be plain words: no quotes, `$`, `;`, `|`, `&`, backticks or redirection. */
+const SAFE_BIN = /^[A-Za-z0-9@/._ -]+$/;
+
+/** Package root: `dist/host/` or `src/host/` → two levels up. */
+const PACKAGE_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+export function packageVersion(): string {
   try {
-    const here = dirname(fileURLToPath(import.meta.url));
-    return JSON.parse(readFileSync(join(here, '..', '..', 'package.json'), 'utf-8')).version;
+    return JSON.parse(readFileSync(join(PACKAGE_ROOT, 'package.json'), 'utf-8')).version;
   } catch {
     return '';
   }
@@ -26,15 +31,55 @@ function packageVersion(): string {
 
 /** Unpinned package command, used only where a pin cannot follow releases (the shared plugin hooks file). */
 export const UNPINNED_BIN = `npx -y ${PACKAGE_NAME}`;
-/** Default `--bin`: npx pinned to this package's own version, so a hook never runs a newer release by surprise. */
-export const DEFAULT_BIN = packageVersion() ? `npx -y ${PACKAGE_NAME}@${packageVersion()}` : UNPINNED_BIN;
+/** npx pinned to this package's own version, so a hook never runs a newer release by surprise. */
+export const PINNED_BIN = packageVersion() ? `npx -y ${PACKAGE_NAME}@${packageVersion()}` : UNPINNED_BIN;
 
-/** `--bin` must be plain words: no quotes, `$`, `;`, `|`, `&`, backticks or redirection. */
-const SAFE_BIN = /^[A-Za-z0-9@/._ -]+$/;
+/**
+ * Running from a git checkout or `npm link` (package root has `.git`, or is
+ * not inside a node_modules directory): the version in package.json may not
+ * be on npm, so hooks run this checkout's own build instead.
+ */
+export function isLocalCheckout(root: string = PACKAGE_ROOT): boolean {
+  return existsSync(join(root, '.git')) || !root.split(/[\\/]/).includes('node_modules');
+}
+
+export interface DefaultBin {
+  bin: string;
+  source: 'local-build' | 'pinned-npx';
+}
+
+/** Default `--bin`: this checkout's dist when local (and the path is plain), else the pinned npx command. */
+export function defaultBin(root: string = PACKAGE_ROOT): DefaultBin {
+  const local = `node ${join(root, 'dist', 'cli', 'index.js')}`;
+  if (isLocalCheckout(root) && SAFE_BIN.test(local)) return { bin: local, source: 'local-build' };
+  return { bin: PINNED_BIN, source: 'pinned-npx' };
+}
+
+export const DEFAULT_BIN = defaultBin().bin;
+
+/**
+ * Ask npm whether `version` of this package is published. Install-time only,
+ * never from a hook. Returns null when npm cannot answer (offline, no npm).
+ */
+export function isVersionPublished(version: string = packageVersion(), env: NodeJS.ProcessEnv = process.env): boolean | null {
+  if (env.BOOKMARK_SKIP_PUBLISH_CHECK === '1' || !version) return null;
+  const result = spawnSync('npm', ['view', `${PACKAGE_NAME}@${version}`, 'version'], { encoding: 'utf-8', timeout: 10_000 });
+  if (result.error || result.status !== 0) {
+    // E404 means npm answered "no such version"; anything else is "could not check".
+    return /E404|No match found/i.test(`${result.stderr}${result.stdout}`) ? false : null;
+  }
+  return result.stdout.trim() === version ? true : false;
+}
+
 
 const ROLE_ALT = [...ROLES, 'check'].join('|');
-/** Exactly what `hookCommand` emits, for any bin: `<bin> <role>[ --host <id>] 2>/dev/null || (true|echo '<json>')`. */
-const GENERATED_COMMAND = new RegExp(`^.+ (?:${ROLE_ALT})(?: --host [a-z][a-z0-9-]*)? 2>/dev/null \\|\\| (?:true|echo '[^']*')$`);
+/**
+ * Exactly what `hookCommand` emits with `--host`, for any bin:
+ * `<bin> <role> --host <id> 2>/dev/null || (true|echo '<json>')`. `--host` is
+ * required so user hooks such as `npm run check 2>/dev/null || true` never
+ * match; host-less Bookmark commands always contain the package name.
+ */
+const GENERATED_COMMAND = new RegExp(`^.+ (?:${ROLE_ALT}) --host [a-z][a-z0-9-]* 2>/dev/null \\|\\| (?:true|echo '[^']*')$`);
 /** Legacy prompt-type hooks from Bookmark < 0.3 referenced this file in their `prompt`. */
 const LEGACY_PROMPT_MARKER = '.bookmark/bookmark.context.md';
 const COMMAND_KEYS = ['command', 'bash', 'powershell'];
@@ -196,15 +241,35 @@ export function readJsonConfig(path: string): HookConfig {
   return parsed as HookConfig;
 }
 
+/** `~/.bookmark/backups/<host>/`: backups stay out of dotfile repos that may hold the real file. */
+export function backupDirFor(host: string, home: string = homedir()): string {
+  return join(home, '.bookmark', 'backups', host);
+}
+
+function isSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Write `config` to `path`: follow a symlink to its target, back the target
- * up to `<target>.bookmark-backup-<stamp>` (same mode) when it exists, then
- * swap the new bytes in atomically with the target's mode (0600 for a new file).
- * Returns the backup path, if any.
+ * Write `config` to `path`: follow a symlink to its target (a dangling link is
+ * refused), copy the existing target to `<backupDir>/<name>.<stamp>` (mode
+ * 0600, directory 0700), then swap the new bytes in atomically with the
+ * target's mode (0600 for a new file). Returns the backup path, if any.
  */
-export function writeJsonConfig(path: string, config: HookConfig, options: { now?: Date } = {}): string | null {
+export function writeJsonConfig(
+  path: string,
+  config: HookConfig,
+  options: { now?: Date; backupDir: string }
+): string | null {
   let target = path;
-  if (existsSync(path) && lstatSync(path).isSymbolicLink()) target = realpathSync(path);
+  if (isSymlink(path)) {
+    if (!existsSync(path)) throw new Error(`${path} is a symlink to a missing file; left it untouched — fix or remove the link, then retry`);
+    target = realpathSync(path);
+  }
   let mode = 0o600;
   let backupPath: string | null = null;
   if (existsSync(target)) {
@@ -212,9 +277,11 @@ export function writeJsonConfig(path: string, config: HookConfig, options: { now
     if (!stats.isFile()) throw new Error(`${target} is not a regular file; left it untouched`);
     mode = stats.mode & 0o777;
     const stamp = (options.now ?? new Date()).toISOString().replace(/[:.]/g, '-');
-    backupPath = `${target}.bookmark-backup-${stamp}`;
+    const dir = options.backupDir;
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    backupPath = join(dir, `${basename(target)}.${stamp}`);
     copyFileSync(target, backupPath);
-    chmodSync(backupPath, mode);
+    chmodSync(backupPath, 0o600);
   }
   writeFileAtomic(target, JSON.stringify(config, null, 2) + '\n', mode);
   return backupPath;
@@ -291,7 +358,9 @@ export function installHost(
   const existing = readJsonConfig(path);
   const { merged, changed } = mergeHookConfig(existing, manifest, entries);
   let backupPath: string | null = null;
-  if (changed && !options.dryRun) backupPath = writeJsonConfig(path, merged, { now: options.now });
+  if (changed && !options.dryRun) {
+    backupPath = writeJsonConfig(path, merged, { now: options.now, backupDir: backupDirFor(manifest.id, options.home) });
+  }
   return { path, changed, dryRun: Boolean(options.dryRun), backupPath, merged, fragment, compat };
 }
 
@@ -302,5 +371,7 @@ export function installHost(
  * here would go stale on every release-please version bump).
  */
 export function pluginHooksConfig(claude: HostManifest): HookConfig {
-  return mergeHookConfig({}, claude, planEntries(claude, UNPINNED_BIN, { host: false })).merged;
+  // Codex loads this file too: `{}` is a valid Stop no-op for both hosts, `{"decision":"approve"}` is Claude-only.
+  const shared: HostManifest = { ...claude, output: { ...claude.output, noop: { ...claude.output.noop, stop: {} } } };
+  return mergeHookConfig({}, shared, planEntries(shared, UNPINNED_BIN, { host: false })).merged;
 }

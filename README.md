@@ -129,17 +129,24 @@ map, config path and output dialect, and `bookmark install` generates each host'
   `~/.gemini/tmp/` transcript → Gemini; `turn_id` or a `~/.codex/sessions/` transcript → Codex;
   camelCase `sessionId` or a `~/.copilot/` transcript → Copilot; otherwise Claude Code.
 - `install` merges into the existing file. It touches only Bookmark's own handlers (commands that
-  name `@tyroneross/bookmark` or have the exact generated shape). Other hooks, sibling handlers in
-  the same group, and other keys stay. Duplicate Bookmark handlers collapse to one, and a second run
-  changes nothing. Before any write, the previous file is copied to `<file>.bookmark-backup-<timestamp>`
-  with the same permissions. A symlinked config is written through to its target. The file keeps
-  its mode, and a new file is created 0600. A config file that is not valid JSON is refused and left
-  untouched. `--dry-run` prints and writes nothing.
-- `--bin <cmd>` defaults to `npx -y @tyroneross/bookmark@<this version>`. The pin resolves only
-  after that version is published to npm. `--bin` accepts plain words only (letters, digits,
-  `@ / . _ -` and spaces) and is written verbatim.
-- Hook timeouts: Claude Code and Codex count seconds (5 s restore, 10 s for the other roles).
-  Gemini counts milliseconds. Copilot uses `timeoutSec`.
+  name `@tyroneross/bookmark`, or that have the exact generated `<bin> <role> --host <id>` shape).
+  Other hooks, sibling handlers in the same group, and other keys stay. Duplicate Bookmark handlers
+  collapse to one, and a second run changes nothing. Before any write, the previous file is copied to
+  `~/.bookmark/backups/<host>/<file>.<timestamp>`. The backup file is 0600 in a 0700 directory, so it
+  stays out of a dotfiles repo that may hold the real file. A symlinked config is written through to
+  its target, and a symlink to a missing file is refused. The file keeps its mode, and a new file is
+  created 0600. A config file that is not valid JSON is refused and left untouched; `bookmark setup`
+  prints one line saying the hooks were skipped. `--dry-run` prints and writes nothing.
+- `--bin <cmd>` default:
+  - Bookmark run from a git checkout or `npm link` (the package root has `.git`, or is not inside
+    `node_modules`): `node <checkout>/dist/cli/index.js`, so hooks run that build. `install` says so.
+  - Bookmark installed from npm: `npx -y @tyroneross/bookmark@<this version>`. `install` asks npm
+    whether that version is published and warns if it is not. Offline, the check is skipped. Hooks
+    never make this check.
+  - `--bin` accepts plain words only (letters, digits, `@ / . _ -` and spaces) and is written verbatim.
+- Hook timeouts: Claude Code and Codex count seconds (15 s for restore, 10 s for the other roles).
+  Gemini counts milliseconds (15000 / 10000). Copilot uses `timeoutSec` (15 / 10). Restore gets
+  15 s so that the first `npx` download on a cold cache can finish before the host gives up.
 - `install` prints each host's unverified details (for example, whether Gemini needs hooks enabled,
   and that Copilot hook stdin has no model).
 - Before writing, `install` checks the event names with `rosslabs-lsp compat --section agent-hooks`.
@@ -148,7 +155,8 @@ map, config path and output dialect, and `bookmark install` generates each host'
 - The plugin's `hooks/hooks.json` is generated from `hosts/claude.json` by
   `node scripts/gen-plugin-hooks.mjs` (after `npm run build`). It has no `--host` because both the
   Claude Code and Codex plugin surfaces load it. It has no version pin because a pin would go stale
-  on every release-please version bump.
+  on every release-please version bump. Its Stop fallback prints `{}`, which both hosts accept as a
+  no-op; `{"decision":"approve"}` is Claude-only.
 - Copilot has no prompt-time hook, so usage is measured at `agentStop`. Without a configured limit,
   the first stop asks the agent once to tell you to set `BOOKMARK_CONTEXT_LIMIT`. Within a session,
   the turn-count estimate never decreases.
@@ -324,10 +332,11 @@ handoff on SessionStart and one short instruction when a token threshold is cros
 | `BOOKMARK_MODEL_CATALOG` | `$XDG_CACHE_HOME/bookmark/models-dev.json` (else `~/.cache/bookmark/models-dev.json`) | Cached models.dev catalog used for context windows |
 | `BOOKMARK_TOKENS_PER_TURN` | `4000` | Tokens per user turn for hosts measured by turn count (Copilot); results are labelled "estimated" |
 | `BOOKMARK_COMPAT_BIN` | `rosslabs-lsp` | Binary `bookmark install` calls to validate hook event names |
+| `BOOKMARK_SKIP_PUBLISH_CHECK` | unset | `1` skips the npm check `bookmark install` runs before using the pinned `npx` command |
 
 Hook commands also accept `--host <id>` (default: detect from stdin). `bookmark install` takes
-`--host <id>` (required), `--dry-run` (default off) and `--bin <cmd>` (default
-`npx -y @tyroneross/bookmark@<this version>`). `bookmark catalog refresh` times out after 15 s and
+`--host <id>` (required), `--dry-run` (default off) and `--bin <cmd>` (default: the local build
+when run from a checkout, else `npx -y @tyroneross/bookmark@<this version>`). `bookmark catalog refresh` times out after 15 s and
 caps the download at 10 MB.
 
 ## Requirements

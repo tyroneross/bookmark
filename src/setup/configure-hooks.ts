@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadManifest, type HostManifest } from '../host/manifest.js';
-import { mergeHookConfig, planEntries, readJsonConfig, removeBookmarkHooks, writeJsonConfig, type HookConfig, type InstallEntry } from '../host/install.js';
+import { backupDirFor, mergeHookConfig, planEntries, readJsonConfig, removeBookmarkHooks, writeJsonConfig, type HookConfig, type InstallEntry } from '../host/install.js';
 
 interface HookEntry {
   type: string;
@@ -88,7 +88,7 @@ export function configureHooks(cwd: string): void {
   // ─── Hook configuration (shared merge writer) ───
   const { manifest, entries } = claudePlan();
   const { merged } = mergeHookConfig(settings as HookConfig, manifest, entries);
-  if (JSON.stringify(merged) !== JSON.stringify(original)) writeJsonConfig(settingsPath, merged);
+  if (JSON.stringify(merged) !== JSON.stringify(original)) writeJsonConfig(settingsPath, merged, { backupDir: backupDirFor('claude') });
 }
 
 /**
@@ -112,7 +112,7 @@ export function configureGlobalHooks(): void {
 
   const { manifest, entries } = claudePlan();
   const { merged, changed } = mergeHookConfig(settings as HookConfig, manifest, entries);
-  if (changed) writeJsonConfig(settingsPath, merged);
+  if (changed) writeJsonConfig(settingsPath, merged, { backupDir: backupDirFor('claude') });
 }
 
 /**
@@ -142,7 +142,7 @@ function removeFromSettings(settingsPath: string, plugins: boolean): void {
     }
     const before = JSON.stringify(readJsonConfig(settingsPath));
     const { merged } = removeBookmarkHooks(settings as HookConfig, 'grouped');
-    if (JSON.stringify(merged) !== before) writeJsonConfig(settingsPath, merged);
+    if (JSON.stringify(merged) !== before) writeJsonConfig(settingsPath, merged, { backupDir: backupDirFor('claude') });
   } catch {
     // Malformed or unwritable settings: leave the file as it is.
   }

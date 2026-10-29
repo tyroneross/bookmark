@@ -7,7 +7,7 @@
           {
             "type": "command",
             "command": "npx -y @tyroneross/bookmark restore 2>/dev/null || true",
-            "timeout": 5
+            "timeout": 15
           }
         ]
       }
@@ -42,7 +42,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "npx -y @tyroneross/bookmark stop 2>/dev/null || echo '{\"decision\":\"approve\"}'",
+            "command": "npx -y @tyroneross/bookmark stop 2>/dev/null || echo '{}'",
             "timeout": 10
           }
         ]

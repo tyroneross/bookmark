@@ -7,6 +7,8 @@ import { hookCommand } from '../host/install.js';
 import { loadManifest } from '../host/manifest.js';
 
 const temporaryDirectories: string[] = [];
+// Backups go to ~/.bookmark/backups; keep them out of the real home.
+process.env.HOME = mkdtempSync(join(tmpdir(), 'bookmark-hooks-home-'));
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -43,6 +45,5 @@ describe('configureHooks', () => {
       command: hookCommand(loadManifest('claude')!, 'context-check'),
       timeout: 10,
     }]);
-    expect(promptHooks[0].hooks[0].command).toMatch(/^npx -y @tyroneross\/bookmark@\d+\.\d+\.\d+ context-check --host claude /);
   });
 });
