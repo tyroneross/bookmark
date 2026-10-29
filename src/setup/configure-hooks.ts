@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadManifest, type HostManifest } from '../host/manifest.js';
-import { isBookmarkEntry, mergeHookConfig, planEntries, writeJsonConfig, type HookConfig, type InstallEntry } from '../host/install.js';
+import { mergeHookConfig, planEntries, readJsonConfig, removeBookmarkHooks, writeJsonConfig, type HookConfig, type InstallEntry } from '../host/install.js';
 
 interface HookEntry {
   type: string;
@@ -55,10 +55,6 @@ function resolvePluginPath(cwd: string): string | null {
   return null;
 }
 
-function isBookmarkHook(hookGroup: SettingsHook): boolean {
-  return isBookmarkEntry(hookGroup);
-}
-
 /**
  * Configure hooks and plugin registration in the project's .claude/settings.json.
  * All hooks are command-type. One synchronous `context-check` hook handles
@@ -72,14 +68,9 @@ export function configureHooks(cwd: string): void {
     mkdirSync(settingsDir, { recursive: true });
   }
 
-  let settings: Settings = {};
-  if (existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    } catch {
-      settings = {};
-    }
-  }
+  // Malformed settings throw here and stay untouched; callers report or skip.
+  const settings = readJsonConfig(settingsPath) as Settings;
+  const original = JSON.parse(JSON.stringify(settings));
 
   // ─── Plugin registration in settings.plugins ───
   if (!settings.plugins) {
@@ -97,7 +88,7 @@ export function configureHooks(cwd: string): void {
   // ─── Hook configuration (shared merge writer) ───
   const { manifest, entries } = claudePlan();
   const { merged } = mergeHookConfig(settings as HookConfig, manifest, entries);
-  writeJsonConfig(settingsPath, merged, { backup: false });
+  if (JSON.stringify(merged) !== JSON.stringify(original)) writeJsonConfig(settingsPath, merged);
 }
 
 /**
@@ -116,18 +107,12 @@ export function configureGlobalHooks(): void {
     mkdirSync(settingsDir, { recursive: true });
   }
 
-  let settings: Settings = {};
-  if (existsSync(settingsPath)) {
-    try {
-      settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    } catch {
-      settings = {};
-    }
-  }
+  // Malformed settings throw here and stay untouched; callers report or skip.
+  const settings = readJsonConfig(settingsPath) as Settings;
 
   const { manifest, entries } = claudePlan();
   const { merged, changed } = mergeHookConfig(settings as HookConfig, manifest, entries);
-  if (changed) writeJsonConfig(settingsPath, merged, { backup: false });
+  if (changed) writeJsonConfig(settingsPath, merged);
 }
 
 /**
@@ -136,56 +121,29 @@ export function configureGlobalHooks(): void {
 export function removeGlobalHooks(): void {
   const home = process.env.HOME || process.env.USERPROFILE || '';
   if (!home) return;
-  const settingsPath = join(home, '.claude', 'settings.json');
-  if (!existsSync(settingsPath)) return;
-
-  try {
-    const settings: Settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-    if (!settings.hooks) return;
-
-    for (const event of Object.keys(settings.hooks)) {
-      settings.hooks[event] = settings.hooks[event].filter(h => !isBookmarkHook(h));
-      if (settings.hooks[event].length === 0) {
-        delete settings.hooks[event];
-      }
-    }
-
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-  } catch {
-    // Silent
-  }
+  removeFromSettings(join(home, '.claude', 'settings.json'), false);
 }
 
 /**
  * Remove bookmark hooks and plugin entry from a project's settings.json.
  */
 export function removeHooks(cwd: string): void {
-  const settingsPath = join(cwd, '.claude', 'settings.json');
+  removeFromSettings(join(cwd, '.claude', 'settings.json'), true);
+}
+
+/** Remove Bookmark handlers (siblings kept) through the shared writer; malformed files stay untouched. */
+function removeFromSettings(settingsPath: string, plugins: boolean): void {
   if (!existsSync(settingsPath)) return;
-
   try {
-    const settings: Settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
-
-    // Remove from plugins array
-    if (settings.plugins) {
+    const settings = readJsonConfig(settingsPath) as Settings;
+    if (plugins && settings.plugins) {
       settings.plugins = settings.plugins.filter(p => !p.includes('bookmark'));
-      if (settings.plugins.length === 0) {
-        delete settings.plugins;
-      }
+      if (settings.plugins.length === 0) delete settings.plugins;
     }
-
-    // Remove hooks (both command and prompt types)
-    if (settings.hooks) {
-      for (const event of Object.keys(settings.hooks)) {
-        settings.hooks[event] = settings.hooks[event].filter(h => !isBookmarkHook(h));
-        if (settings.hooks[event].length === 0) {
-          delete settings.hooks[event];
-        }
-      }
-    }
-
-    writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+    const before = JSON.stringify(readJsonConfig(settingsPath));
+    const { merged } = removeBookmarkHooks(settings as HookConfig, 'grouped');
+    if (JSON.stringify(merged) !== before) writeJsonConfig(settingsPath, merged);
   } catch {
-    // Silent
+    // Malformed or unwritable settings: leave the file as it is.
   }
 }

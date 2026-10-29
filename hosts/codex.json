@@ -6,9 +6,15 @@
   "source": "https://learn.chatgpt.com/docs/hooks (fetched 2026-10-28); docs/research/2026-10-28-multi-host-support.md section 1",
   "detectPriority": 10,
   "detect": {
-    "anyKeys": ["turn_id"],
-    "transcriptPathIncludes": ["/.codex/sessions/"],
-    "env": ["PLUGIN_ROOT"]
+    "anyKeys": [
+      "turn_id"
+    ],
+    "transcriptPathIncludes": [
+      "/.codex/sessions/"
+    ],
+    "env": [
+      "PLUGIN_ROOT"
+    ]
   },
   "config": {
     "path": "~/.codex/hooks.json",
@@ -16,8 +22,13 @@
     "matcher": null,
     "fileVersion": null,
     "commandKey": "command",
-    "timeoutKey": null,
-    "timeouts": null
+    "timeoutKey": "timeout",
+    "timeouts": {
+      "restore": 5,
+      "context-check": 10,
+      "precompact": 10,
+      "stop": 10
+    }
   },
   "events": {
     "restore": "SessionStart",
@@ -26,20 +37,37 @@
     "stop": "Stop"
   },
   "fields": {
-    "sessionId": ["session_id"],
-    "transcriptPath": ["transcript_path"],
-    "cwd": ["cwd"],
-    "model": ["model"],
-    "prompt": ["prompt"],
-    "source": ["source"],
-    "stopHookActive": ["stop_hook_active"]
+    "sessionId": [
+      "session_id"
+    ],
+    "transcriptPath": [
+      "transcript_path"
+    ],
+    "cwd": [
+      "cwd"
+    ],
+    "model": [
+      "model"
+    ],
+    "prompt": [
+      "prompt"
+    ],
+    "source": [
+      "source"
+    ],
+    "stopHookActive": [
+      "stop_hook_active"
+    ]
   },
   "output": {
     "restore": "text",
     "inject": "hookSpecificOutput",
     "blockDecision": "block",
     "systemMessage": true,
-    "noop": { "stop": {}, "default": {} }
+    "noop": {
+      "stop": {},
+      "default": {}
+    }
   },
   "usage": "transcript-jsonl",
   "capabilities": {
@@ -47,5 +75,9 @@
     "blockStop": true,
     "usageInTranscript": true,
     "windowInTranscript": true
-  }
+  },
+  "caveats": [
+    "Codex asks for a one-time trust review of new hooks: run /hooks in Codex after installing.",
+    "A Stop no-op of {} is inferred from the documented output fields, not stated by the docs."
+  ]
 }

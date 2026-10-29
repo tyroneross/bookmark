@@ -13,7 +13,12 @@
     "fileVersion": null,
     "commandKey": "command",
     "timeoutKey": "timeout",
-    "timeouts": { "restore": 5000, "context-check": 10000, "precompact": 10000, "stop": 10000 }
+    "timeouts": {
+      "restore": 5,
+      "context-check": 10,
+      "precompact": 10,
+      "stop": 10
+    }
   },
   "events": {
     "restore": "SessionStart",
@@ -22,20 +27,39 @@
     "stop": "Stop"
   },
   "fields": {
-    "sessionId": ["session_id"],
-    "transcriptPath": ["transcript_path"],
-    "cwd": ["cwd"],
-    "model": ["model"],
-    "prompt": ["prompt"],
-    "source": ["source"],
-    "stopHookActive": ["stop_hook_active"]
+    "sessionId": [
+      "session_id"
+    ],
+    "transcriptPath": [
+      "transcript_path"
+    ],
+    "cwd": [
+      "cwd"
+    ],
+    "model": [
+      "model"
+    ],
+    "prompt": [
+      "prompt"
+    ],
+    "source": [
+      "source"
+    ],
+    "stopHookActive": [
+      "stop_hook_active"
+    ]
   },
   "output": {
     "restore": "text",
     "inject": "hookSpecificOutput",
     "blockDecision": "block",
     "systemMessage": true,
-    "noop": { "stop": { "decision": "approve" }, "default": {} }
+    "noop": {
+      "stop": {
+        "decision": "approve"
+      },
+      "default": {}
+    }
   },
   "usage": "transcript-jsonl",
   "capabilities": {
@@ -43,5 +67,6 @@
     "blockStop": true,
     "usageInTranscript": true,
     "windowInTranscript": false
-  }
+  },
+  "caveats": []
 }

@@ -3,6 +3,8 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { configureHooks } from './configure-hooks.js';
+import { hookCommand } from '../host/install.js';
+import { loadManifest } from '../host/manifest.js';
 
 const temporaryDirectories: string[] = [];
 
@@ -38,8 +40,9 @@ describe('configureHooks', () => {
     expect(promptHooks).toHaveLength(1);
     expect(promptHooks[0].hooks).toEqual([{
       type: 'command',
-      command: 'npx @tyroneross/bookmark context-check --host claude 2>/dev/null || echo \'{}\'',
-      timeout: 10000,
+      command: hookCommand(loadManifest('claude')!, 'context-check'),
+      timeout: 10,
     }]);
+    expect(promptHooks[0].hooks[0].command).toMatch(/^npx -y @tyroneross\/bookmark@\d+\.\d+\.\d+ context-check --host claude /);
   });
 });
