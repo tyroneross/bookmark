@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fstatSync, openSync, readSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readSync, statSync } from 'node:fs';
 import { lookupCatalogContextWindow } from './model-catalog.js';
 
 const MAX_TAIL_BYTES = 4 * 1024 * 1024;
@@ -99,8 +99,14 @@ export function readLatestContextUsage(
   try {
     // Codex rollouts: the newest token_count event carries usage and the
     // model's own context window; turn_context records carry the model name.
-    let codexUsage: ContextUsageObservation | null = null;
-    let sawCodexTokenCount = false;
+    // Collect the newest token_count first, then the model from an older
+    // turn_context, and only then resolve the window (M4: never "codex").
+    let codexUsage: CodexTokenCount | null = null;
+    const finishCodex = (model: string | undefined): ContextUsageObservation => {
+      const name = model ?? 'codex';
+      const window = resolveContextWindow(model ?? '', { override: contextLimitOverride, reported: codexUsage!.reportedWindow });
+      return observation(name, codexUsage!.usedTokens, window, 'transcript_usage', false);
+    };
     for (let index = lines.length - 1; index >= 0; index -= 1) {
       const line = lines[index].trim();
       if (!line) continue;
@@ -111,14 +117,10 @@ export function readLatestContextUsage(
           const payload = isRecord(record.payload) ? record.payload : null;
           if (!payload) continue;
           if (record.type === 'turn_context' && codexUsage && typeof payload.model === 'string') {
-            return { ...codexUsage, model: payload.model };
+            return finishCodex(payload.model);
           }
-          if (record.type === 'event_msg' && payload.type === 'token_count' && !sawCodexTokenCount) {
-            const observed = readCodexTokenCount(payload, contextLimitOverride, pendingPrompt);
-            if (observed) {
-              sawCodexTokenCount = true;
-              codexUsage = observed;
-            }
+          if (record.type === 'event_msg' && payload.type === 'token_count' && !codexUsage) {
+            codexUsage = readCodexTokenCount(payload, pendingPrompt);
           }
           continue;
         }
@@ -164,7 +166,7 @@ export function readLatestContextUsage(
         // Skip malformed or partial JSONL lines.
       }
     }
-    if (codexUsage) return codexUsage;
+    if (codexUsage) return finishCodex(undefined);
   } catch {
     return null;
   }
@@ -177,6 +179,8 @@ function readTailLines(path: string): string[] | null {
   if (!existsSync(path)) return null;
   let fd: number | undefined;
   try {
+    // Regular files only: opening a FIFO would block the hook.
+    if (!statSync(path).isFile()) return null;
     fd = openSync(path, 'r');
     const size = fstatSync(fd).size;
     if (size === 0) return null;
@@ -270,12 +274,12 @@ export const DEFAULT_TOKENS_PER_TURN = 4000;
  * For hosts whose transcript format is undocumented (Copilot CLI): count user
  * turns and multiply by a per-turn budget. Always labelled `estimated`. A turn
  * is a JSONL record whose `type` contains "user" or whose `role` is "user"
- * [INFERRED]. The window comes from override → catalog (if the model is known)
+ * [INFERRED]. The result never drops below `previousTokens`. The window comes from override → catalog (if the model is known)
  * → table; with none, the result is `unknown_context_limit`.
  */
 export function estimateContextUsageFromTurns(
   transcriptPath: string,
-  options: { override?: number; model?: string; tokensPerTurn?: number } = {}
+  options: { override?: number; model?: string; tokensPerTurn?: number; previousTokens?: number } = {}
 ): ContextUsageObservation | null {
   const lines = readTailLines(transcriptPath);
   if (!lines) return null;
@@ -293,11 +297,14 @@ export function estimateContextUsageFromTurns(
       // Skip malformed or partial JSONL lines.
     }
   }
-  if (turns === 0) return null;
   const perTurn = isPositive(options.tokensPerTurn) ? options.tokensPerTurn : DEFAULT_TOKENS_PER_TURN;
+  // Only the 4 MiB tail is read, so early turns drop out as the file grows;
+  // the caller's previous estimate for this session keeps the value monotonic.
+  const usedTokens = Math.max(turns * perTurn, isPositive(options.previousTokens) ? options.previousTokens : 0);
+  if (usedTokens === 0) return null;
   const model = options.model ?? 'unknown';
   const window = resolveContextWindow(options.model ?? '', { override: options.override });
-  return observation(model, turns * perTurn, window, 'turn_estimate', true);
+  return observation(model, usedTokens, window, 'turn_estimate', true);
 }
 
 function promptEstimateTokens(pendingPrompt: string): number {
@@ -313,21 +320,18 @@ function isPositive(value: number | undefined): value is number {
  * whose input_tokens already include cached input; info.model_context_window
  * is the window Codex itself uses for the active model.
  */
-function readCodexTokenCount(
-  payload: Record<string, unknown>,
-  contextLimitOverride: number | undefined,
-  pendingPrompt: string
-): ContextUsageObservation | null {
+interface CodexTokenCount {
+  usedTokens: number;
+  reportedWindow: number;
+}
+
+function readCodexTokenCount(payload: Record<string, unknown>, pendingPrompt: string): CodexTokenCount | null {
   const info = isRecord(payload.info) ? payload.info : null;
   const last = info && isRecord(info.last_token_usage) ? info.last_token_usage : null;
   if (!info || !last) return null;
-  const promptEstimate = pendingPrompt ? Math.ceil(Buffer.byteLength(pendingPrompt, 'utf8') / 4) : 0;
-  const usedTokens = tokenCount(last.input_tokens) + tokenCount(last.output_tokens) + promptEstimate;
+  const usedTokens = tokenCount(last.input_tokens) + tokenCount(last.output_tokens) + promptEstimateTokens(pendingPrompt);
   if (usedTokens <= 0) return null;
-  const model = 'codex';
-  const reported = tokenCount(info.model_context_window);
-  const contextLimitTokens = resolveContextWindow(model, { override: contextLimitOverride, reported });
-  return observation(model, usedTokens, contextLimitTokens, 'transcript_usage', false);
+  return { usedTokens, reportedWindow: tokenCount(info.model_context_window) };
 }
 
 export function newlyCrossedThresholds(

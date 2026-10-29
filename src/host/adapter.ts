@@ -1,3 +1,4 @@
+import { statSync } from 'node:fs';
 import {
   estimateContextUsageFromTurns,
   readGeminiContextUsage,
@@ -36,7 +37,7 @@ export interface HostAdapter {
   capabilities: HostManifest['capabilities'];
   detect(stdin: Record<string, unknown>, env: NodeJS.ProcessEnv): boolean;
   normalize(stdin: Record<string, unknown>, role: Role): HookEvent;
-  readUsage(ev: HookEvent, options: { contextLimitOverride?: number; pendingPrompt?: string; env?: NodeJS.ProcessEnv }): ContextUsageObservation | null;
+  readUsage(ev: HookEvent, options: { contextLimitOverride?: number; pendingPrompt?: string; env?: NodeJS.ProcessEnv; previousEstimatedTokens?: number }): ContextUsageObservation | null;
   emit(ev: HookEvent, action: HookAction): { stdout: string; exitCode: number };
 }
 
@@ -53,6 +54,20 @@ function firstBoolean(stdin: Record<string, unknown>, keys: string[]): boolean |
     if (typeof stdin[key] === 'boolean') return stdin[key] as boolean;
   }
   return undefined;
+}
+
+/**
+ * Keep a transcript path only when it names a regular file (symlinks are
+ * followed): a FIFO or device would block the hook's read forever.
+ */
+function regularFile(path: string | undefined): string | undefined {
+  if (!path) return undefined;
+  try {
+    return statSync(path).isFile() ? path : undefined;
+  } catch {
+    // A path that does not exist yet is kept; readers treat it as "no usage".
+    return path;
+  }
 }
 
 export function createAdapter(manifest: HostManifest): HostAdapter {
@@ -82,6 +97,8 @@ export function createAdapter(manifest: HostManifest): HostAdapter {
 
     detect(stdin, env) {
       const has = (key: string) => stdin[key] !== undefined && stdin[key] !== null;
+      const eventName = typeof stdin.hook_event_name === 'string' ? stdin.hook_event_name : undefined;
+      if (eventName && detect.events?.includes(eventName)) return true;
       const keyRules = Boolean(detect.anyKeys?.length || detect.allKeys?.length);
       if (keyRules) {
         const all = (detect.allKeys ?? []).every(has);
@@ -100,7 +117,7 @@ export function createAdapter(manifest: HostManifest): HostAdapter {
         role,
         sessionId: firstString(stdin, fields.sessionId),
         cwd: firstString(stdin, fields.cwd),
-        transcriptPath: firstString(stdin, fields.transcriptPath),
+        transcriptPath: regularFile(firstString(stdin, fields.transcriptPath)),
         model: firstString(stdin, fields.model),
         prompt: firstString(stdin, fields.prompt),
         source: firstString(stdin, fields.source),
@@ -122,6 +139,7 @@ export function createAdapter(manifest: HostManifest): HostAdapter {
             override: options.contextLimitOverride,
             model: ev.model,
             tokensPerTurn: Number.isFinite(perTurn) && perTurn > 0 ? perTurn : undefined,
+            previousTokens: options.previousEstimatedTokens,
           });
         }
         default:
@@ -135,8 +153,18 @@ export function createAdapter(manifest: HostManifest): HostAdapter {
         case 'noop':
           return { stdout: noop(ev.role), exitCode: 0 };
         case 'notify':
-          if (!output.systemMessage) return { stdout: noop(ev.role), exitCode: 0 };
-          return { stdout: JSON.stringify({ systemMessage: action.systemMessage }), exitCode: 0 };
+          if (output.systemMessage) return { stdout: JSON.stringify({ systemMessage: action.systemMessage }), exitCode: 0 };
+          // No notice channel: at stop, one block whose reason asks the agent to relay the notice.
+          if (ev.role === 'stop' && manifest.capabilities.blockStop) {
+            return {
+              stdout: JSON.stringify({
+                decision: output.blockDecision,
+                reason: `Tell the user this Bookmark notice in one sentence, then stop: ${action.systemMessage}`,
+              }),
+              exitCode: 0,
+            };
+          }
+          return { stdout: noop(ev.role), exitCode: 0 };
         case 'inject': {
           // Degrade by capability: prompt-time injection the host ignores becomes a notice.
           if (ev.role === 'context-check' && !manifest.capabilities.injectOnPrompt) {

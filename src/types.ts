@@ -119,6 +119,8 @@ export interface BookmarkState {
   latest_context_limit_tokens?: number;
   latest_context_used_pct?: number;
   latest_context_observed_at?: number;
+  /** True when latest_context_tokens is a heuristic (turn-count) estimate; it then never decreases within a session. */
+  latest_context_estimated?: boolean;
   unknown_context_limit_notified_model?: string;
 
   // Thresholds already handled in the current session/compaction cycle.

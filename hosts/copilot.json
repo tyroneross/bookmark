@@ -6,8 +6,12 @@
   "source": "https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-hooks-reference (fetched 2026-10-28); docs/research/2026-10-28-multi-host-support.md section 3",
   "detectPriority": 20,
   "detect": {
-    "anyKeys": ["sessionId"],
-    "transcriptPathIncludes": ["/.copilot/"]
+    "anyKeys": [
+      "sessionId"
+    ],
+    "transcriptPathIncludes": [
+      "/.copilot/"
+    ]
   },
   "config": {
     "path": "~/.copilot/hooks/bookmark.json",
@@ -16,7 +20,11 @@
     "fileVersion": 1,
     "commandKey": "bash",
     "timeoutKey": "timeoutSec",
-    "timeouts": { "restore": 5, "precompact": 10, "stop": 10 }
+    "timeouts": {
+      "restore": 5,
+      "precompact": 10,
+      "stop": 10
+    }
   },
   "events": {
     "restore": "sessionStart",
@@ -24,20 +32,40 @@
     "stop": "agentStop"
   },
   "fields": {
-    "sessionId": ["sessionId", "session_id"],
-    "transcriptPath": ["transcriptPath", "transcript_path"],
-    "cwd": ["cwd"],
-    "model": ["model"],
-    "prompt": ["prompt"],
-    "source": ["source"],
-    "stopHookActive": ["stop_hook_active", "stopHookActive"]
+    "sessionId": [
+      "sessionId",
+      "session_id"
+    ],
+    "transcriptPath": [
+      "transcriptPath",
+      "transcript_path"
+    ],
+    "cwd": [
+      "cwd"
+    ],
+    "model": [
+      "model"
+    ],
+    "prompt": [
+      "prompt"
+    ],
+    "source": [
+      "source"
+    ],
+    "stopHookActive": [
+      "stop_hook_active",
+      "stopHookActive"
+    ]
   },
   "output": {
     "restore": "additionalContext",
     "inject": "additionalContext",
     "blockDecision": "block",
     "systemMessage": false,
-    "noop": { "stop": {}, "default": {} }
+    "noop": {
+      "stop": {},
+      "default": {}
+    }
   },
   "usage": "turn-estimate",
   "capabilities": {
@@ -45,5 +73,11 @@
     "blockStop": true,
     "usageInTranscript": false,
     "windowInTranscript": false
-  }
+  },
+  "caveats": [
+    "Copilot hook stdin carries no model and events.jsonl is undocumented: usage is a turn-count estimate, labelled estimated.",
+    "Set BOOKMARK_CONTEXT_LIMIT (or bookmark config --context-limit) or Bookmark cannot tell when context is filling up.",
+    "userPromptSubmitted cannot inject context, so Bookmark measures at agentStop.",
+    "The hooks file shape (handlers directly under each event) is inferred from the documented handler fields."
+  ]
 }

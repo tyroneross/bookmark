@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createAdapter, getAdapter, resolveAdapter } from './adapter.js';
-import { listHostIds, loadManifest, ROLES } from './manifest.js';
-import { hookCommand, installHost, mergeHookConfig, planEntries, validateEventsWithCompat } from './install.js';
+import { listHostIds, loadManifest, manifestProblems, ROLES } from './manifest.js';
+import { hookCommand, installHost, mergeHookConfig, planEntries, pluginHooksConfig, validateEventsWithCompat } from './install.js';
 import {
   estimateContextUsageFromTurns,
   readGeminiContextUsage,
@@ -51,9 +52,24 @@ describe('host manifests', () => {
     }
   });
 
-  it('plugin hooks/hooks.json uses exactly the Claude manifest events (no second copy of host facts drifts)', () => {
-    const pluginHooks = JSON.parse(readFileSync(join(repoRoot, 'hooks', 'hooks.json'), 'utf-8')).hooks;
-    expect(Object.keys(pluginHooks).sort()).toEqual(Object.values(loadManifest('claude')!.events).sort());
+  it('plugin hooks/hooks.json is exactly what the Claude manifest generates (run scripts/gen-plugin-hooks.mjs after a manifest change)', () => {
+    const pluginHooks = JSON.parse(readFileSync(join(repoRoot, 'hooks', 'hooks.json'), 'utf-8'));
+    expect(pluginHooks).toEqual(pluginHooksConfig(loadManifest('claude')!));
+  });
+
+  it('claude and codex timeouts are seconds (5-10), gemini milliseconds, copilot timeoutSec', () => {
+    for (const id of ['claude', 'codex']) {
+      const m = loadManifest(id)!;
+      expect(m.config.timeoutKey).toBe('timeout');
+      for (const value of Object.values(m.config.timeouts!)) expect(value).toBeGreaterThanOrEqual(5), expect(value).toBeLessThanOrEqual(10);
+    }
+    expect(loadManifest('copilot')!.config.timeoutKey).toBe('timeoutSec');
+  });
+
+  it('rejects a manifest whose no-op output contains a single quote', () => {
+    const m = JSON.parse(JSON.stringify(loadManifest('codex')!));
+    m.output.noop.stop = { reason: "it's" };
+    expect(manifestProblems(m)).toEqual(['output.noop.stop contains a single quote']);
   });
 
   it('copilot has no prompt-time role: context-check degrades to stop', () => {
@@ -231,5 +247,61 @@ describe('install merge writer', () => {
 
   it('createAdapter works from a manifest object alone', () => {
     expect(createAdapter(loadManifest('codex')!).id).toBe('codex');
+  });
+});
+
+describe('audit round 1: detection and usage', () => {
+  it('M2: a Copilot Claude-compat payload (snake_case + timestamp) is not detected as Gemini', () => {
+    const compat = { session_id: 's', timestamp: '2026-01-01T00:00:00Z', cwd: '/x', hook_event_name: 'Stop', stop_hook_active: false };
+    expect(resolveAdapter(compat, undefined, {}).adapter.id).not.toBe('gemini');
+    expect(resolveAdapter({ ...compat, transcript_path: '/home/u/.copilot/session-state/s/events.jsonl' }, undefined, {}).adapter.id).toBe('copilot');
+    expect(resolveAdapter({ ...compat, hook_event_name: 'AfterAgent' }, undefined, {}).adapter.id).toBe('gemini');
+  });
+
+  it('M4: Codex catalog fallback uses the turn_context model, not "codex"', () => {
+    const dir = temp();
+    const rollout = join(dir, 'r.jsonl');
+    writeFileSync(rollout, [
+      { type: 'turn_context', payload: { model: 'gpt-fixture' } },
+      { type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: 500, output_tokens: 0 } } } },
+    ].map(r => JSON.stringify(r)).join('\n') + '\n');
+    const catalog = join(dir, 'c.json');
+    writeFileSync(catalog, JSON.stringify({ openai: { models: { 'gpt-fixture': { limit: { context: 1000 } }, codex: { limit: { context: 7 } } } } }));
+    process.env.BOOKMARK_MODEL_CATALOG = catalog;
+    try {
+      expect(getAdapter('codex')!.readUsage({ host: 'codex', role: 'stop', transcriptPath: rollout }, {}))
+        .toMatchObject({ status: 'measured', model: 'gpt-fixture', contextLimitTokens: 1000 });
+    } finally {
+      process.env.BOOKMARK_MODEL_CATALOG = noCatalog;
+    }
+  });
+
+  it('L4: provider-qualified ids use that provider; ambiguous unqualified ids give no catalog value', () => {
+    const dir = temp();
+    const catalog = join(dir, 'c.json');
+    writeFileSync(catalog, JSON.stringify({ a: { models: { m: { limit: { context: 100 } } } }, b: { models: { m: { limit: { context: 200 } } } } }));
+    expect(resolveContextWindow('m', { catalogPath: catalog })).toBeNull();
+    expect(resolveContextWindow('b/m', { catalogPath: catalog })).toBe(200);
+  });
+
+  it('L5: the Copilot estimate never decreases when early turns leave the 4 MiB tail', () => {
+    const dir = temp();
+    const path = join(dir, 'events.jsonl');
+    const turn = JSON.stringify({ type: 'user.message', data: { content: 'x' } }) + '\n';
+    writeFileSync(path, turn.repeat(10));
+    const first = estimateContextUsageFromTurns(path, { tokensPerTurn: 1 })!;
+    expect(first.usedTokens).toBe(10);
+    const filler = JSON.stringify({ type: 'assistant.message', data: { content: 'y'.repeat(1024 * 1024) } }) + '\n';
+    writeFileSync(path, turn.repeat(10) + filler.repeat(5) + turn);
+    expect(estimateContextUsageFromTurns(path, { tokensPerTurn: 1 })!.usedTokens).toBe(1);
+    expect(estimateContextUsageFromTurns(path, { tokensPerTurn: 1, previousTokens: first.usedTokens })!.usedTokens).toBe(10);
+  });
+
+  it('L2: a FIFO transcript path is dropped instead of blocking the hook', () => {
+    const dir = temp();
+    const fifo = join(dir, 'pipe');
+    execFileSync('mkfifo', [fifo]);
+    const ev = getAdapter('claude')!.normalize({ session_id: 's', transcript_path: fifo }, 'stop');
+    expect(ev.transcriptPath).toBeUndefined();
   });
 });

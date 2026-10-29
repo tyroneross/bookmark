@@ -25,6 +25,8 @@ export interface HostManifest {
   /** Lower runs first during stdin sniffing; the host with an empty `detect` is the fallback. */
   detectPriority: number;
   detect: {
+    /** stdin `hook_event_name` values only this host uses (e.g. Gemini's BeforeAgent). */
+    events?: string[];
     anyKeys?: string[];
     allKeys?: string[];
     noneKeys?: string[];
@@ -54,6 +56,8 @@ export interface HostManifest {
     noop: { stop: Record<string, unknown>; default: Record<string, unknown> };
   };
   usage: UsageReader;
+  /** Unverified dialect details `bookmark install` prints for this host. */
+  caveats?: string[];
   capabilities: {
     injectOnPrompt: boolean;
     blockStop: boolean;
@@ -91,12 +95,25 @@ export function loadManifest(id: string, dir: string = hostsDir()): HostManifest
   if (!existsSync(path)) return null;
   try {
     const manifest = JSON.parse(readFileSync(path, 'utf-8')) as HostManifest;
-    if (manifest.id !== id) return null;
+    if (manifest.id !== id || manifestProblems(manifest).length > 0) return null;
     cache.set(key, manifest);
     return manifest;
   } catch {
     return null;
   }
+}
+
+/**
+ * Structural checks that keep generated shell commands safe: no-op outputs
+ * are echoed inside single quotes, so they must not contain one.
+ */
+export function manifestProblems(manifest: HostManifest): string[] {
+  const problems: string[] = [];
+  for (const [name, value] of Object.entries(manifest.output?.noop ?? {})) {
+    if (JSON.stringify(value).includes("'")) problems.push(`output.noop.${name} contains a single quote`);
+  }
+  if (!manifest.config || !manifest.events || !manifest.fields) problems.push('missing config, events or fields');
+  return problems;
 }
 
 export function loadAllManifests(dir: string = hostsDir()): HostManifest[] {
