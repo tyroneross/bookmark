@@ -38,7 +38,7 @@ import {
   verifyHandoff,
 } from '../handoff/lineage.js';
 import { decideStop, sealIfChanged } from '../handoff/stop.js';
-import { loadConfig, getStoragePath, resolveHookStorage, resolveStopMode, writeConfig } from '../config.js';
+import { loadConfig, getStoragePath, resolveHookStorage, resolveStopMode, writeConfig, type HookStorage } from '../config.js';
 import { configureHooks } from '../setup/configure-hooks.js';
 import { ensureProjectBootstrapped, setupProject } from '../setup/auto-setup.js';
 import { findById, pruneStale, getLastProject, loadRegistry } from '../registry.js';
@@ -116,13 +116,15 @@ program
     try {
       const hookInput = await readHookInput();
       const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
-      ensureProjectBootstrapped(cwd);
+      // Same resolver as stop; restore may read a $HOME pointer but never creates storage there.
+      const storage = hookStorage(cwd, true);
+      if (!storage) return;
       const source = opts.sessionSource ?? hookInput?.source ?? 'startup';
 
       const result = restoreContext({
         source,
         sessionId: hookInput?.session_id,
-        cwd,
+        cwd: storage.root,
         format: opts.format,
       });
 
@@ -143,11 +145,11 @@ program
   .action(async (opts) => {
     try {
       const hookInput = await readHookInput();
-      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
-      ensureProjectBootstrapped(cwd);
+      const storage = hookStorage(opts.cwd ?? hookInput?.cwd ?? process.cwd(), true);
+      if (!storage || storage.homePointer) return;
+      const { root: cwd, storagePath } = storage;
       const transcriptPath = opts.transcript ?? hookInput?.transcript_path;
       const config = loadConfig(cwd);
-      const storagePath = getStoragePath(cwd, config);
       const sessionId = hookInput?.session_id;
       const state = loadSessionState(storagePath, sessionId);
 
@@ -196,11 +198,13 @@ program
         console.log(JSON.stringify({}));
         return;
       }
-      const cwd = opts.cwd ?? hookInput?.cwd ?? process.cwd();
-      ensureProjectBootstrapped(cwd);
-
+      const storage = hookStorage(opts.cwd ?? hookInput?.cwd ?? process.cwd(), true);
+      if (!storage || storage.homePointer) {
+        console.log(JSON.stringify({}));
+        return;
+      }
+      const { root: cwd, storagePath } = storage;
       const config = loadConfig(cwd);
-      const storagePath = getStoragePath(cwd, config);
       const paneId = currentPaneId();
       const pid = currentClaudePid();
       // A7 toggle; C7: Easy Terminal owns this pane's handoff, so bookmark stands down.
@@ -492,11 +496,16 @@ program
   .action(async (opts) => {
     try {
       const hookInput = await readHookInput();
-      const cwd = opts.cwd ?? hookInput?.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
-      ensureProjectBootstrapped(cwd);
+      const rawCwd = opts.cwd ?? hookInput?.cwd ?? process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+      const storage = hookStorage(rawCwd, true);
+      if (!storage || storage.homePointer) {
+        console.log(JSON.stringify({}));
+        return;
+      }
+      const cwd = storage.root;
 
       // Always capture file tracking snapshot
-      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(cwd);
+      const transcriptPath = hookInput?.transcript_path ?? discoverTranscriptPath(rawCwd);
       if (transcriptPath) {
         try {
           await captureSnapshot({
@@ -1039,6 +1048,20 @@ handoffCommand
   });
 
 // ─── Helpers ───
+
+/**
+ * Storage for every hook role (restore, context-check, precompact, stop): one
+ * resolver, `resolveHookStorage` — the git root of cwd, else the nearest
+ * ancestor that already has `.bookmark/`, else null (write nothing).
+ * `bootstrap` creates storage at that root only, never in a subfolder and
+ * never in $HOME (a home-pointer root is returned as-is for reading).
+ */
+function hookStorage(cwd: string, bootstrap: boolean): HookStorage | null {
+  const storage = resolveHookStorage(cwd);
+  if (!storage) return null;
+  if (bootstrap && !storage.homePointer) ensureProjectBootstrapped(storage.root);
+  return storage;
+}
 
 /**
  * Update the home-directory pointer at ~/.bookmark/bookmark.context.md to point

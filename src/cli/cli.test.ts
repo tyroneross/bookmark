@@ -181,3 +181,29 @@ describe('Stop at an ordinary turn end', () => {
     expect(readdirSync(join(home, '.bookmark')).sort()).toEqual(before);
   });
 });
+
+describe('one storage resolver for every hook role', () => {
+  it('restore, context-check and precompact create storage only at the git root, never in a subfolder', () => {
+    const repo = newGitRepo('resolver-root');
+    const sub = join(repo, 'src', 'deep');
+    mkdirSync(sub, { recursive: true });
+    const transcript = writeTranscript(join(sandbox, 'transcripts'), 'R1', 1_000);
+    for (const role of ['restore', 'context-check', 'precompact', 'stop']) {
+      const result = run([role], { cwd: sub, session_id: 'R1', transcript_path: transcript, prompt: 'hi' });
+      expect(result.status).toBe(0);
+    }
+    expect(existsSync(join(repo, '.bookmark'))).toBe(true);
+    expect(existsSync(join(sub, '.bookmark'))).toBe(false);
+    expect(existsSync(join(repo, 'src', '.bookmark'))).toBe(false);
+  });
+
+  it('writes nothing outside a git repo or existing .bookmark ancestor', () => {
+    const loose = join(sandbox, 'loose-dir');
+    mkdirSync(loose, { recursive: true });
+    const transcript = writeTranscript(join(sandbox, 'transcripts'), 'R2', 1_000);
+    expect(run(['restore'], { cwd: loose, session_id: 'R2' }).stdout).toBe('');
+    expect(JSON.parse(run(['context-check'], { cwd: loose, session_id: 'R2', transcript_path: transcript }).stdout)).toEqual({});
+    expect(JSON.parse(run(['precompact'], { cwd: loose, session_id: 'R2', transcript_path: transcript }).stdout)).toEqual({});
+    expect(existsSync(join(loose, '.bookmark'))).toBe(false);
+  });
+});
