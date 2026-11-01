@@ -188,12 +188,12 @@ describe('audit round 3', () => {
     expect(stop.endsWith("|| echo '{}'")).toBe(true);
   });
 
-  it('plugin hooks run the committed bundle from CLAUDE_PLUGIN_ROOT, with npx only as fallback', () => {
+  it('plugin hooks run the committed bundle from CLAUDE_PLUGIN_ROOT, without downloading a fallback', () => {
     const hooks = pluginHooksConfig(loadManifest('claude')!).hooks!;
     for (const [event, groups] of Object.entries(hooks)) {
       const command = (groups as Array<{ hooks: Array<{ command: string }> }>)[0].hooks[0].command;
       expect(command, event).toMatch(/^if \[ -f "\$\{CLAUDE_PLUGIN_ROOT:-\}\/bundle\/cli\/index\.mjs" \]; then node /);
-      expect(command, event).toContain('; else npx -y @tyroneross/bookmark ');
+      expect(command, event).toContain("; else printf '{}'; fi");
     }
     expect(existsSync(join(repoRoot, 'bundle', 'cli', 'index.mjs'))).toBe(true);
     expect(existsSync(join(repoRoot, 'bundle', 'mcp', 'server.mjs'))).toBe(true);

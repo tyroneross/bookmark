@@ -33,6 +33,9 @@ export interface Snapshot {
 
   // Continuity chain
   prior_snapshot_id?: string;
+  transcript_source?: string;
+  transcript_identity?: string;
+  transcript_offset?: number;
 }
 
 export type SnapshotTrigger = 'pre_compact' | 'token_threshold' | 'time_interval' | 'manual' | 'session_end';

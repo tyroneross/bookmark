@@ -1,4 +1,4 @@
-import { relative, isAbsolute } from 'node:path';
+import { relative, isAbsolute, resolve } from 'node:path';
 import type { TranscriptEntry, FileActivity, FileOperation } from '../types.js';
 
 /**
@@ -94,6 +94,19 @@ function extractFilesChanged(entries: TranscriptEntry[], projectPath?: string): 
         }
       }
 
+      if (toolName === 'apply_patch' && typeof input.command === 'string') {
+        let previous: string | null = null;
+        for (const match of input.command.matchAll(/^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/gm)) {
+          const path = projectPath ? resolve(projectPath, match[2]) : match[2];
+          if (projectPath && (relative(projectPath, path).startsWith('..') || isAbsolute(relative(projectPath, path)))) continue;
+          const operation: FileOperation = match[1] === 'Delete File' ? 'delete' : match[1] === 'Update File' ? 'edit' : 'create';
+          const ops = fileMap.get(path) ?? new Set<FileOperation>();
+          ops.add(operation); fileMap.set(path, ops);
+          if (match[1] === 'Move to' && previous) fileMap.set(previous, new Set<FileOperation>(['delete']));
+          previous = path;
+        }
+      }
+
       if (toolName === 'Bash' || toolName === 'bash') {
         const cmd = (input.command as string) ?? '';
         for (const pattern of FILE_CREATING_BASH_PATTERNS) {
@@ -131,7 +144,7 @@ function extractFilesChanged(entries: TranscriptEntry[], projectPath?: string): 
     });
   }
 
-  return result.slice(0, 20);
+  return result; // Canonical snapshots retain every file; renderers own previews.
 }
 
 function extractStructuralHints(newStr: string, oldStr: string, changes: Set<string>): void {

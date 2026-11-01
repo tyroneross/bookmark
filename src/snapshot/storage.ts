@@ -1,3 +1,4 @@
+import { withFileLock } from '../util/file-lock.js';
 import { readFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { writeFileAtomic } from '../util/atomic-write.js';
 import { randomBytes } from 'node:crypto';
@@ -49,7 +50,7 @@ export function storeSnapshot(storagePath: string, snapshot: Snapshot): string {
   writeFileAtomic(snapshotPath, JSON.stringify(snapshot, null, 2));
 
   // Update index
-  updateIndex(storagePath, snapshot);
+  withFileLock(getIndexPath(storagePath), () => updateIndex(storagePath, snapshot));
 
   return snapshotId;
 }
@@ -137,7 +138,7 @@ function updateIndex(storagePath: string, snapshot: Snapshot): void {
   };
 
   // Add to front (most recent first)
-  index.snapshots.unshift(entry);
+  index.snapshots = [entry, ...index.snapshots.filter(s => s.id !== entry.id)].sort((a, b) => b.timestamp - a.timestamp);
 
   // Update stats
   index.stats.total_snapshots = index.snapshots.length;

@@ -1,3 +1,5 @@
+import { withFileLock } from './util/file-lock.js';
+import { writeFileAtomic } from './util/atomic-write.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { homedir } from 'node:os';
@@ -100,11 +102,12 @@ export function loadRegistry(): Registry {
 function saveRegistry(registry: Registry): void {
   ensureRegistryDir();
   registry.last_updated = Date.now();
-  writeFileSync(getRegistryPath(), JSON.stringify(registry, null, 2), 'utf-8');
+  writeFileAtomic(getRegistryPath(), JSON.stringify(registry, null, 2), 0o600);
 }
 
 export function appendToRegistry(snapshot: Snapshot, canonicalFile: string): void {
   try {
+    withFileLock(getRegistryPath(), () => {
     const registry = loadRegistry();
     const entry: RegistryEntry = {
       id: snapshot.snapshot_id,
@@ -129,6 +132,7 @@ export function appendToRegistry(snapshot: Snapshot, canonicalFile: string): voi
     };
 
     saveRegistry(registry);
+    });
   } catch {
     // Never break capture for registry bookkeeping
   }
@@ -136,6 +140,7 @@ export function appendToRegistry(snapshot: Snapshot, canonicalFile: string): voi
 
 export function touchLastProject(projectPath: string): void {
   try {
+    withFileLock(getRegistryPath(), () => {
     const registry = loadRegistry();
     registry.last_project = {
       path: projectPath,
@@ -143,6 +148,7 @@ export function touchLastProject(projectPath: string): void {
       last_activity_at: Date.now(),
     };
     saveRegistry(registry);
+    });
   } catch {
     // Silent — never break restore for bookkeeping
   }
@@ -159,6 +165,7 @@ export function getLastProject(): LastProject | null {
 
 /** Prune entries whose canonical_file is missing. Lazy cleanup on read paths. */
 export function pruneStale(): Registry {
+  return withFileLock(getRegistryPath(), () => {
   const registry = loadRegistry();
   const live = registry.snapshots.filter(e => existsSync(e.canonical_file));
   if (live.length !== registry.snapshots.length) {
@@ -166,4 +173,5 @@ export function pruneStale(): Registry {
     saveRegistry(registry);
   }
   return registry;
+  });
 }

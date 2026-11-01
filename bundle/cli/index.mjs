@@ -37,9 +37,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 ));
 
-// node_modules/commander/lib/error.js
+// ../../git-folder/bookmark/node_modules/commander/lib/error.js
 var require_error = __commonJS({
-  "node_modules/commander/lib/error.js"(exports) {
+  "../../git-folder/bookmark/node_modules/commander/lib/error.js"(exports) {
     var CommanderError2 = class extends Error {
       /**
        * Constructs the CommanderError class
@@ -72,9 +72,9 @@ var require_error = __commonJS({
   }
 });
 
-// node_modules/commander/lib/argument.js
+// ../../git-folder/bookmark/node_modules/commander/lib/argument.js
 var require_argument = __commonJS({
-  "node_modules/commander/lib/argument.js"(exports) {
+  "../../git-folder/bookmark/node_modules/commander/lib/argument.js"(exports) {
     var { InvalidArgumentError: InvalidArgumentError2 } = require_error();
     var Argument2 = class {
       /**
@@ -200,9 +200,9 @@ var require_argument = __commonJS({
   }
 });
 
-// node_modules/commander/lib/help.js
+// ../../git-folder/bookmark/node_modules/commander/lib/help.js
 var require_help = __commonJS({
-  "node_modules/commander/lib/help.js"(exports) {
+  "../../git-folder/bookmark/node_modules/commander/lib/help.js"(exports) {
     var { humanReadableArgName } = require_argument();
     var Help2 = class {
       constructor() {
@@ -802,9 +802,9 @@ ${itemIndentStr}`);
   }
 });
 
-// node_modules/commander/lib/option.js
+// ../../git-folder/bookmark/node_modules/commander/lib/option.js
 var require_option = __commonJS({
-  "node_modules/commander/lib/option.js"(exports) {
+  "../../git-folder/bookmark/node_modules/commander/lib/option.js"(exports) {
     var { InvalidArgumentError: InvalidArgumentError2 } = require_error();
     var Option2 = class {
       /**
@@ -1115,9 +1115,9 @@ var require_option = __commonJS({
   }
 });
 
-// node_modules/commander/lib/suggestSimilar.js
+// ../../git-folder/bookmark/node_modules/commander/lib/suggestSimilar.js
 var require_suggestSimilar = __commonJS({
-  "node_modules/commander/lib/suggestSimilar.js"(exports) {
+  "../../git-folder/bookmark/node_modules/commander/lib/suggestSimilar.js"(exports) {
     var maxDistance = 3;
     function editDistance(a, b) {
       if (Math.abs(a.length - b.length) > maxDistance)
@@ -1195,9 +1195,9 @@ var require_suggestSimilar = __commonJS({
   }
 });
 
-// node_modules/commander/lib/command.js
+// ../../git-folder/bookmark/node_modules/commander/lib/command.js
 var require_command = __commonJS({
-  "node_modules/commander/lib/command.js"(exports) {
+  "../../git-folder/bookmark/node_modules/commander/lib/command.js"(exports) {
     var EventEmitter = __require("node:events").EventEmitter;
     var childProcess = __require("node:child_process");
     var path = __require("node:path");
@@ -3441,9 +3441,9 @@ Expecting one of '${allowedValues.join("', '")}'`);
   }
 });
 
-// node_modules/commander/index.js
+// ../../git-folder/bookmark/node_modules/commander/index.js
 var require_commander = __commonJS({
-  "node_modules/commander/index.js"(exports) {
+  "../../git-folder/bookmark/node_modules/commander/index.js"(exports) {
     var { Argument: Argument2 } = require_argument();
     var { Command: Command2 } = require_command();
     var { CommanderError: CommanderError2, InvalidArgumentError: InvalidArgumentError2 } = require_error();
@@ -3463,7 +3463,7 @@ var require_commander = __commonJS({
   }
 });
 
-// node_modules/commander/esm.mjs
+// ../../git-folder/bookmark/node_modules/commander/esm.mjs
 var import_index = __toESM(require_commander(), 1);
 var {
   program,
@@ -3481,31 +3481,101 @@ var {
 } = import_index.default;
 
 // src/cli/index.ts
-import { appendFileSync, existsSync as existsSync19, mkdirSync as mkdirSync10, readFileSync as readFileSync18, readdirSync as readdirSync6, statSync as statSync11 } from "node:fs";
-import { join as join19, dirname as dirname7, basename as basename5 } from "node:path";
+import { appendFileSync, existsSync as existsSync19, mkdirSync as mkdirSync11, readFileSync as readFileSync18, readdirSync as readdirSync6, statSync as statSync13 } from "node:fs";
+import { join as join20, dirname as dirname8, basename as basename5 } from "node:path";
 import { homedir as homedir6 } from "node:os";
 import { createInterface } from "node:readline";
 import { fileURLToPath as fileURLToPath4 } from "node:url";
 
 // src/snapshot/capture.ts
-import { join as join8 } from "node:path";
+import { statSync as statSync5 } from "node:fs";
+
+// src/util/file-lock.ts
+import { mkdirSync, readFileSync, writeFileSync, rmSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+function withFileLock(target, action, timeoutMs = 1e3) {
+  mkdirSync(dirname(target), { recursive: true });
+  const lock = `${target}.lock`;
+  const deadline = performance.now() + timeoutMs;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  while (true) {
+    try {
+      mkdirSync(lock);
+      try {
+        writeFileSync(join(lock, "owner"), String(process.pid));
+      } catch (error) {
+        rmSync(lock, { recursive: true });
+        throw error;
+      }
+      break;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      const reap = `${lock}.reap`;
+      try {
+        mkdirSync(reap);
+        try {
+          let dead = false;
+          try {
+            const pid = Number(readFileSync(join(lock, "owner"), "utf8"));
+            if (Number.isInteger(pid) && pid > 0) {
+              try {
+                process.kill(pid, 0);
+              } catch (e) {
+                dead = e.code === "ESRCH";
+              }
+            }
+          } catch {
+            dead = Date.now() - statSync(lock).mtimeMs > 5e3;
+          }
+          if (dead) rmSync(lock, { recursive: true });
+        } finally {
+          rmSync(reap, { recursive: true });
+        }
+      } catch (e) {
+        if (!["EEXIST", "ENOENT"].includes(e.code || "")) throw e;
+      }
+      if (performance.now() >= deadline) throw new Error(`Bookmark storage busy: ${target}`);
+      Atomics.wait(sleeper, 0, 0, 10);
+    }
+  }
+  try {
+    return action();
+  } finally {
+    rmSync(lock, { recursive: true });
+  }
+}
+
+// src/snapshot/capture.ts
+import { join as join9 } from "node:path";
 
 // src/transcript/parser.ts
-import { readFileSync, existsSync, statSync } from "node:fs";
+import { openSync, readSync, closeSync, existsSync, statSync as statSync2 } from "node:fs";
 function parseTranscript(transcriptPath, options) {
   if (!existsSync(transcriptPath)) {
     return { entries: [], bytesRead: 0, totalBytes: 0 };
   }
   const startOffset = options?.startOffset ?? 0;
-  const stat = statSync(transcriptPath);
+  const stat = statSync2(transcriptPath);
   const totalBytes = stat.size;
   if (startOffset >= totalBytes) {
     return { entries: [], bytesRead: totalBytes, totalBytes };
   }
-  const raw = readFileSync(transcriptPath, "utf-8");
+  const fd = openSync(transcriptPath, "r");
+  const buffer = Buffer.alloc(totalBytes - startOffset);
+  let loaded = 0;
+  try {
+    while (loaded < buffer.length) {
+      const n = readSync(fd, buffer, loaded, buffer.length - loaded, startOffset + loaded);
+      if (!n) break;
+      loaded += n;
+    }
+  } finally {
+    closeSync(fd);
+  }
+  const raw = buffer.subarray(0, loaded).toString("utf-8");
   const lines = raw.split("\n");
   const entries = [];
-  let currentByteOffset = 0;
+  let currentByteOffset = startOffset;
   for (const line of lines) {
     const lineBytes = Buffer.byteLength(line + "\n", "utf-8");
     if (currentByteOffset < startOffset) {
@@ -3555,15 +3625,35 @@ function parseTranscript(transcriptPath, options) {
         }
       }
     } catch {
+      if (currentByteOffset >= totalBytes && !raw.endsWith("\n")) currentByteOffset -= lineBytes;
     }
   }
   return {
     entries,
-    bytesRead: totalBytes,
+    bytesRead: Math.min(totalBytes, currentByteOffset),
     totalBytes
   };
 }
 function normalizeEntry(raw) {
+  if (raw.type === "response_item" && raw.payload && typeof raw.payload === "object") {
+    const p = raw.payload;
+    if (p.type === "function_call" || p.type === "custom_tool_call") {
+      let input = {};
+      if (p.type === "custom_tool_call") input = { command: p.input };
+      else {
+        try {
+          input = JSON.parse(String(p.arguments || "{}"));
+        } catch {
+          return null;
+        }
+      }
+      return { type: "tool_use", content: "", tool_name: String(p.name || ""), tool_input: input };
+    }
+    if (p.type === "function_call_output" || p.type === "custom_tool_call_output") {
+      return { type: "tool_result", content: String(p.output || "") };
+    }
+    if (p.type === "message") raw = { ...p };
+  }
   const type = inferType(raw);
   if (!type) return null;
   const content = extractTextContent(raw);
@@ -3624,7 +3714,7 @@ function extractTextContent(raw) {
 }
 
 // src/transcript/extractor.ts
-import { relative, isAbsolute } from "node:path";
+import { relative, isAbsolute, resolve } from "node:path";
 function toProjectRelative(filePath, projectPath) {
   if (!projectPath || !filePath) return filePath;
   if (!isAbsolute(filePath)) return filePath;
@@ -3671,6 +3761,19 @@ function extractFilesChanged(entries, projectPath) {
           }
         }
       }
+      if (toolName === "apply_patch" && typeof input.command === "string") {
+        let previous = null;
+        for (const match of input.command.matchAll(/^\*\*\* (Add File|Update File|Delete File|Move to): (.+)$/gm)) {
+          const path = projectPath ? resolve(projectPath, match[2]) : match[2];
+          if (projectPath && (relative(projectPath, path).startsWith("..") || isAbsolute(relative(projectPath, path)))) continue;
+          const operation = match[1] === "Delete File" ? "delete" : match[1] === "Update File" ? "edit" : "create";
+          const ops = fileMap.get(path) ?? /* @__PURE__ */ new Set();
+          ops.add(operation);
+          fileMap.set(path, ops);
+          if (match[1] === "Move to" && previous) fileMap.set(previous, /* @__PURE__ */ new Set(["delete"]));
+          previous = path;
+        }
+      }
       if (toolName === "Bash" || toolName === "bash") {
         const cmd = input.command ?? "";
         for (const pattern of FILE_CREATING_BASH_PATTERNS) {
@@ -3704,7 +3807,7 @@ function extractFilesChanged(entries, projectPath) {
       summary
     });
   }
-  return result.slice(0, 20);
+  return result;
 }
 function extractStructuralHints(newStr, oldStr, changes) {
   if (!newStr && !oldStr) return;
@@ -3760,18 +3863,18 @@ function extractToolsSummary(entries) {
 }
 
 // src/snapshot/storage.ts
-import { readFileSync as readFileSync2, existsSync as existsSync2, mkdirSync as mkdirSync2, readdirSync } from "node:fs";
+import { readFileSync as readFileSync2, existsSync as existsSync2, mkdirSync as mkdirSync3, readdirSync } from "node:fs";
 
 // src/util/atomic-write.ts
-import { chmodSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync as mkdirSync2, renameSync, unlinkSync, writeFileSync as writeFileSync2 } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname as dirname2, join as join2 } from "node:path";
 function writeFileAtomic(path, data, mode) {
-  const dir = dirname(path);
-  mkdirSync(dir, { recursive: true });
-  const temp = join(dir, `.${basename(path)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
+  const dir = dirname2(path);
+  mkdirSync2(dir, { recursive: true });
+  const temp = join2(dir, `.${basename(path)}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`);
   try {
-    writeFileSync(temp, data, { encoding: typeof data === "string" ? "utf-8" : void 0, mode: mode ?? 438 });
+    writeFileSync2(temp, data, { encoding: typeof data === "string" ? "utf-8" : void 0, mode: mode ?? 438 });
     if (mode !== void 0) chmodSync(temp, mode);
     renameSync(temp, path);
   } catch (err) {
@@ -3785,7 +3888,7 @@ function writeFileAtomic(path, data, mode) {
 
 // src/snapshot/storage.ts
 import { randomBytes as randomBytes2 } from "node:crypto";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 var INDEX_VERSION = "1.0.0";
 function generateSnapshotId() {
   const now = /* @__PURE__ */ new Date();
@@ -3797,39 +3900,39 @@ function generateSnapshotId() {
   return `SNAP_${date}_${time}_${milliseconds}_${entropy}`;
 }
 function getSnapshotsDir(storagePath) {
-  return join2(storagePath, "snapshots");
+  return join3(storagePath, "snapshots");
 }
 function getLatestPath(storagePath) {
-  return join2(storagePath, "LATEST.md");
+  return join3(storagePath, "LATEST.md");
 }
 function getIndexPath(storagePath) {
-  return join2(storagePath, "index.json");
+  return join3(storagePath, "index.json");
 }
 function ensureStorageDirs(storagePath) {
   const dirs = [
     storagePath,
-    join2(storagePath, "snapshots"),
-    join2(storagePath, "archive")
+    join3(storagePath, "snapshots"),
+    join3(storagePath, "archive")
   ];
   for (const dir of dirs) {
     if (!existsSync2(dir)) {
-      mkdirSync2(dir, { recursive: true });
+      mkdirSync3(dir, { recursive: true });
     }
   }
 }
 function storeSnapshot(storagePath, snapshot) {
   ensureStorageDirs(storagePath);
   const snapshotId = snapshot.snapshot_id || generateSnapshotId();
-  const snapshotPath = join2(getSnapshotsDir(storagePath), `${snapshotId}.json`);
+  const snapshotPath = join3(getSnapshotsDir(storagePath), `${snapshotId}.json`);
   writeFileAtomic(snapshotPath, JSON.stringify(snapshot, null, 2));
-  updateIndex(storagePath, snapshot);
+  withFileLock(getIndexPath(storagePath), () => updateIndex(storagePath, snapshot));
   return snapshotId;
 }
 function loadSnapshot(storagePath, snapshotId) {
   if (!/^SNAP_\d{8}_\d{6}(?:_\d{3}_[a-f0-9]{4})?$/.test(snapshotId)) {
     return null;
   }
-  const snapshotPath = join2(getSnapshotsDir(storagePath), `${snapshotId}.json`);
+  const snapshotPath = join3(getSnapshotsDir(storagePath), `${snapshotId}.json`);
   if (!existsSync2(snapshotPath)) return null;
   try {
     return JSON.parse(readFileSync2(snapshotPath, "utf-8"));
@@ -3894,7 +3997,7 @@ function updateIndex(storagePath, snapshot) {
     context_remaining_pct: snapshot.context_remaining_pct,
     token_estimate: snapshot.token_estimate
   };
-  index.snapshots.unshift(entry);
+  index.snapshots = [entry, ...index.snapshots.filter((s) => s.id !== entry.id)].sort((a, b) => b.timestamp - a.timestamp);
   index.stats.total_snapshots = index.snapshots.length;
   index.stats.last_snapshot = snapshot.timestamp;
   index.last_updated = Date.now();
@@ -3969,14 +4072,14 @@ function shortenPath(filePath, projectPath) {
 }
 
 // src/trails/writer.ts
-import { existsSync as existsSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync3, writeFileSync as writeFileSync2 } from "node:fs";
-import { join as join3 } from "node:path";
+import { existsSync as existsSync3, mkdirSync as mkdirSync4, readFileSync as readFileSync3, writeFileSync as writeFileSync3 } from "node:fs";
+import { join as join4 } from "node:path";
 function writeTrails(storagePath, snapshot) {
   const trailsDir = ensureTrailsDir(storagePath);
   writeFileTrail(trailsDir, snapshot);
 }
 function writeFileTrail(trailsDir, snapshot) {
-  const trailPath = join3(trailsDir, "files.md");
+  const trailPath = join4(trailsDir, "files.md");
   const fileMap = loadFileEntries(trailPath);
   for (const f of snapshot.files_changed) {
     const shortPath = f.path.startsWith(snapshot.project_path) ? f.path.slice(snapshot.project_path.length).replace(/^\//, "") : f.path;
@@ -4020,7 +4123,7 @@ function writeFileTrail(trailsDir, snapshot) {
     }
     lines.push(line);
   }
-  writeFileSync2(trailPath, lines.join("\n"), "utf-8");
+  writeFileSync3(trailPath, lines.join("\n"), "utf-8");
   const topFiles = files.filter((f) => f.summary).slice(0, 5).map((f) => ({ path: f.path, summary: f.summary }));
   return { count: files.length, totalLines, topFiles };
 }
@@ -4048,40 +4151,40 @@ function loadFileEntries(trailPath) {
   }
 }
 function ensureTrailsDir(storagePath) {
-  const trailsDir = join3(storagePath, "trails");
+  const trailsDir = join4(storagePath, "trails");
   if (!existsSync3(trailsDir)) {
-    mkdirSync3(trailsDir, { recursive: true });
+    mkdirSync4(trailsDir, { recursive: true });
   }
   return trailsDir;
 }
 
 // src/threshold/state.ts
-import { readFileSync as readFileSync4, readdirSync as readdirSync2, existsSync as existsSync4, statSync as statSync2 } from "node:fs";
-import { join as join5 } from "node:path";
+import { readFileSync as readFileSync4, readdirSync as readdirSync2, existsSync as existsSync4, statSync as statSync3 } from "node:fs";
+import { join as join6 } from "node:path";
 
 // src/handoff/paths.ts
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
-import { isAbsolute as isAbsolute2, join as join4, resolve } from "node:path";
+import { isAbsolute as isAbsolute2, join as join5, resolve as resolve2 } from "node:path";
 var SAFE_SEGMENT = /^[A-Za-z0-9._-]{1,128}$/;
 function safeSegment(value) {
   if (SAFE_SEGMENT.test(value) && value !== "." && value !== "..") return value;
   return `h-${createHash("sha256").update(value).digest("hex").slice(0, 32)}`;
 }
 function getSessionsDir(storagePath) {
-  return join4(storagePath, "sessions");
+  return join5(storagePath, "sessions");
 }
 function getSessionDir(storagePath, sessionId) {
-  return join4(getSessionsDir(storagePath), safeSegment(sessionId));
+  return join5(getSessionsDir(storagePath), safeSegment(sessionId));
 }
 function getSessionHandoffPath(storagePath, sessionId) {
-  return join4(getSessionDir(storagePath, sessionId), "handoff.md");
+  return join5(getSessionDir(storagePath, sessionId), "handoff.md");
 }
 function getSessionStopMarkerPath(storagePath, sessionId) {
-  return join4(getSessionDir(storagePath, sessionId), "stop-requested");
+  return join5(getSessionDir(storagePath, sessionId), "stop-requested");
 }
 function getLineageDir(storagePath) {
-  return join4(storagePath, "lineage");
+  return join5(storagePath, "lineage");
 }
 function lineageKey(options) {
   if (options.pid && options.paneId) return `pane:${options.paneId}:pid:${options.pid}`;
@@ -4092,7 +4195,7 @@ function lineageKey(options) {
 var LEGACY_LINEAGE_KEY = "legacy";
 function getLineagePath(storagePath, key) {
   const name = key.split(":").map(safeSegment).join(":");
-  return join4(getLineageDir(storagePath), `${name}.json`);
+  return join5(getLineageDir(storagePath), `${name}.json`);
 }
 function currentPaneId(env = process.env) {
   const pane = env.EASY_TERMINAL_PANE_ID?.trim();
@@ -4105,10 +4208,10 @@ function currentClaudePid(env = process.env) {
 function easyTerminalStateDir(env = process.env) {
   const override = env.ET_STATE_DIR?.trim() || env.ET_APP_STATE_DIR?.trim();
   if (override) {
-    const expanded = override.startsWith("~/") ? join4(homedir(), override.slice(2)) : override;
-    return isAbsolute2(expanded) ? expanded : resolve(expanded);
+    const expanded = override.startsWith("~/") ? join5(homedir(), override.slice(2)) : override;
+    return isAbsolute2(expanded) ? expanded : resolve2(expanded);
   }
-  return join4(homedir(), "Library", "Application Support", "EasyTerminal");
+  return join5(homedir(), "Library", "Application Support", "EasyTerminal");
 }
 function paneFileName(paneId) {
   return SAFE_SEGMENT.test(paneId) && paneId !== "." && paneId !== ".." ? paneId : null;
@@ -4130,7 +4233,7 @@ function defaultState() {
   };
 }
 function getStatePath(storagePath) {
-  return join5(storagePath, "state.json");
+  return join6(storagePath, "state.json");
 }
 function loadState(storagePath) {
   const statePath = getStatePath(storagePath);
@@ -4167,14 +4270,14 @@ function saveSessionState(storagePath, sessionId, state) {
   saveState(getSessionDir(storagePath, sessionId), state);
 }
 function loadLatestSessionState(storagePath) {
-  const sessionsDir = join5(storagePath, "sessions");
+  const sessionsDir = join6(storagePath, "sessions");
   let newest = null;
   try {
     for (const name of readdirSync2(sessionsDir)) {
-      const statePath = join5(sessionsDir, name, "state.json");
+      const statePath = join6(sessionsDir, name, "state.json");
       try {
-        const mtime = statSync2(statePath).mtimeMs;
-        if (!newest || mtime > newest.mtime) newest = { dir: join5(sessionsDir, name), mtime };
+        const mtime = statSync3(statePath).mtimeMs;
+        if (!newest || mtime > newest.mtime) newest = { dir: join6(sessionsDir, name), mtime };
       } catch {
       }
     }
@@ -4246,13 +4349,13 @@ function incrementSnapshotCount(state) {
 }
 
 // src/config.ts
-import { readFileSync as readFileSync6, writeFileSync as writeFileSync3, existsSync as existsSync6, mkdirSync as mkdirSync4, readdirSync as readdirSync3, renameSync as renameSync2, rmdirSync } from "node:fs";
-import { dirname as dirname2, join as join6, sep } from "node:path";
+import { readFileSync as readFileSync6, writeFileSync as writeFileSync4, existsSync as existsSync6, mkdirSync as mkdirSync5, readdirSync as readdirSync3, renameSync as renameSync2, rmdirSync } from "node:fs";
+import { dirname as dirname3, join as join7, sep } from "node:path";
 import { homedir as homedir2 } from "node:os";
 
 // src/trails/identity.ts
-import { existsSync as existsSync5, readFileSync as readFileSync5, statSync as statSync3 } from "node:fs";
-import { resolve as resolve2 } from "node:path";
+import { existsSync as existsSync5, readFileSync as readFileSync5, statSync as statSync4 } from "node:fs";
+import { resolve as resolve3 } from "node:path";
 var IDENTITY_BLOCK = /<!--\s*BOOKMARK_IDENTITY\s*\n([\s\S]*?)\n\s*-->/;
 function parseIdentity(content) {
   const match = content.match(IDENTITY_BLOCK);
@@ -4291,8 +4394,8 @@ function parseIdentity(content) {
 function validateRepoIdentity(identity, cwd) {
   if (identity.scope !== "repo") return null;
   if (!identity.repo_path) return null;
-  const declared = resolve2(identity.repo_path);
-  const actual = resolve2(cwd);
+  const declared = resolve3(identity.repo_path);
+  const actual = resolve3(cwd);
   if (declared === actual) return null;
   if (actual.startsWith(declared + "/")) return null;
   return `[Bookmark identity mismatch] This bookmark.context.md declares repo_path=${declared} but was loaded from cwd=${actual}. Verify you are in the correct project before acting on the context below.`;
@@ -4304,7 +4407,7 @@ function followPointer(identity) {
   if (!existsSync5(target)) return null;
   try {
     const content = readFileSync5(target, "utf-8");
-    const mtime = statSync3(target).mtimeMs;
+    const mtime = statSync4(target).mtimeMs;
     const staleness_hours = Math.round((Date.now() - mtime) / (1e3 * 60 * 60));
     const { identity: targetIdentity } = parseIdentity(content);
     return {
@@ -4342,12 +4445,12 @@ function parseFractions(value) {
 function resolveProjectRoot(cwd) {
   const home = homedir2();
   let dir = cwd;
-  while (dir && dir !== dirname2(dir)) {
-    if (existsSync6(join6(dir, ".bookmark")) || existsSync6(join6(dir, ".git")) || existsSync6(join6(dir, "package.json"))) {
+  while (dir && dir !== dirname3(dir)) {
+    if (existsSync6(join7(dir, ".bookmark")) || existsSync6(join7(dir, ".git")) || existsSync6(join7(dir, "package.json"))) {
       return dir;
     }
     if (dir === home) break;
-    dir = dirname2(dir);
+    dir = dirname3(dir);
   }
   return cwd;
 }
@@ -4355,7 +4458,7 @@ function loadConfig(cwd) {
   const config = { ...DEFAULTS };
   if (cwd) {
     const root = resolveProjectRoot(cwd);
-    const projectConfigPath = join6(root, ".bookmark", "config.json");
+    const projectConfigPath = join7(root, ".bookmark", "config.json");
     if (existsSync6(projectConfigPath)) {
       try {
         const projectConfig = JSON.parse(readFileSync6(projectConfigPath, "utf-8"));
@@ -4398,11 +4501,11 @@ function getStoragePath(cwd, config) {
     return cfg.storagePath;
   }
   const root = resolveProjectRoot(cwd);
-  return join6(root, cfg.storagePath);
+  return join7(root, cfg.storagePath);
 }
 function migrateLegacyStorage(cwd) {
-  const legacyPath = join6(cwd, ".claude", "bookmarks");
-  const newPath = join6(cwd, ".bookmark");
+  const legacyPath = join7(cwd, ".claude", "bookmarks");
+  const newPath = join7(cwd, ".bookmark");
   if (!existsSync6(legacyPath)) return;
   if (existsSync6(newPath)) {
     try {
@@ -4415,12 +4518,12 @@ function migrateLegacyStorage(cwd) {
   }
   try {
     if (!existsSync6(newPath)) {
-      mkdirSync4(newPath, { recursive: true });
+      mkdirSync5(newPath, { recursive: true });
     }
     const items = readdirSync3(legacyPath);
     for (const item of items) {
-      const legacyItemPath = join6(legacyPath, item);
-      const newItemPath = join6(newPath, item);
+      const legacyItemPath = join7(legacyPath, item);
+      const newItemPath = join7(newPath, item);
       try {
         renameSync2(legacyItemPath, newItemPath);
       } catch {
@@ -4430,7 +4533,7 @@ function migrateLegacyStorage(cwd) {
       const remaining = readdirSync3(legacyPath);
       if (remaining.length === 0) {
         rmdirSync(legacyPath);
-        const claudePath = join6(cwd, ".claude");
+        const claudePath = join7(cwd, ".claude");
         try {
           const claudeContents = readdirSync3(claudePath);
           if (claudeContents.length === 0) {
@@ -4445,11 +4548,11 @@ function migrateLegacyStorage(cwd) {
   }
 }
 function writeConfig(cwd, prefs) {
-  const configDir = join6(resolveProjectRoot(cwd), ".bookmark");
+  const configDir = join7(resolveProjectRoot(cwd), ".bookmark");
   if (!existsSync6(configDir)) {
-    mkdirSync4(configDir, { recursive: true });
+    mkdirSync5(configDir, { recursive: true });
   }
-  const configPath = join6(configDir, "config.json");
+  const configPath = join7(configDir, "config.json");
   let existing = {};
   if (existsSync6(configPath)) {
     try {
@@ -4461,21 +4564,21 @@ function writeConfig(cwd, prefs) {
   if (prefs.intervalMinutes !== void 0) merged.intervalMinutes = prefs.intervalMinutes;
   if (prefs.tokenThresholds !== void 0) merged.tokenThresholds = prefs.tokenThresholds;
   if (prefs.contextLimitTokens !== void 0) merged.contextLimitTokens = prefs.contextLimitTokens;
-  writeFileSync3(configPath, JSON.stringify(merged, null, 2), "utf-8");
+  writeFileSync4(configPath, JSON.stringify(merged, null, 2), "utf-8");
 }
 function findGitRoot(cwd) {
   let dir = cwd;
-  while (dir && dir !== dirname2(dir)) {
-    if (existsSync6(join6(dir, ".git"))) return dir;
-    dir = dirname2(dir);
+  while (dir && dir !== dirname3(dir)) {
+    if (existsSync6(join7(dir, ".git"))) return dir;
+    dir = dirname3(dir);
   }
   return null;
 }
 function findExistingBookmarkRoot(cwd) {
   let dir = cwd;
-  while (dir && dir !== dirname2(dir)) {
-    if (existsSync6(join6(dir, ".bookmark"))) return dir;
-    dir = dirname2(dir);
+  while (dir && dir !== dirname3(dir)) {
+    if (existsSync6(join7(dir, ".bookmark"))) return dir;
+    dir = dirname3(dir);
   }
   return null;
 }
@@ -4491,8 +4594,8 @@ function resolveHookStorage(cwd, config) {
   const root = findGitRoot(cwd) ?? findExistingBookmarkRoot(cwd);
   if (!root) return null;
   const cfg = config ?? loadConfig(root);
-  const storagePath = cfg.storagePath.startsWith("/") ? cfg.storagePath : join6(root, cfg.storagePath);
-  const homePointer = root === home || home !== "" && home.startsWith(root.endsWith(sep) ? root : root + sep) || isHomePointerFile(join6(storagePath, "bookmark.context.md"));
+  const storagePath = cfg.storagePath.startsWith("/") ? cfg.storagePath : join7(root, cfg.storagePath);
+  const homePointer = root === home || home !== "" && home.startsWith(root.endsWith(sep) ? root : root + sep) || isHomePointerFile(join7(storagePath, "bookmark.context.md"));
   return { root, storagePath, homePointer };
 }
 function resolveStopMode(config, env = process.env) {
@@ -4501,14 +4604,14 @@ function resolveStopMode(config, env = process.env) {
 }
 
 // src/registry.ts
-import { existsSync as existsSync7, mkdirSync as mkdirSync5, readFileSync as readFileSync7, writeFileSync as writeFileSync4 } from "node:fs";
-import { basename as basename3, dirname as dirname3, join as join7 } from "node:path";
+import { existsSync as existsSync7, mkdirSync as mkdirSync6, readFileSync as readFileSync7 } from "node:fs";
+import { basename as basename3, dirname as dirname4, join as join8 } from "node:path";
 import { homedir as homedir3 } from "node:os";
 var REGISTRY_VERSION = "1.0.0";
 var MAX_ENTRIES = 500;
 function resolveProjectName(cwd) {
   const home = homedir3();
-  const pkgPath = join7(cwd, "package.json");
+  const pkgPath = join8(cwd, "package.json");
   if (existsSync7(pkgPath)) {
     try {
       const pkg = JSON.parse(readFileSync7(pkgPath, "utf-8"));
@@ -4519,12 +4622,12 @@ function resolveProjectName(cwd) {
     }
   }
   let dir = cwd;
-  const root = dirname3(home);
-  while (dir && dir !== root && dir !== dirname3(dir)) {
-    if (existsSync7(join7(dir, ".git"))) {
+  const root = dirname4(home);
+  while (dir && dir !== root && dir !== dirname4(dir)) {
+    if (existsSync7(join8(dir, ".git"))) {
       return basename3(dir);
     }
-    dir = dirname3(dir);
+    dir = dirname4(dir);
   }
   const cwdBase = basename3(cwd);
   if (cwd === home || cwdBase === basename3(home)) {
@@ -4533,11 +4636,11 @@ function resolveProjectName(cwd) {
   return cwdBase;
 }
 function getRegistryPath() {
-  return join7(homedir3(), ".bookmark", "registry.json");
+  return join8(homedir3(), ".bookmark", "registry.json");
 }
 function ensureRegistryDir() {
-  const dir = join7(homedir3(), ".bookmark");
-  if (!existsSync7(dir)) mkdirSync5(dir, { recursive: true });
+  const dir = join8(homedir3(), ".bookmark");
+  if (!existsSync7(dir)) mkdirSync6(dir, { recursive: true });
 }
 function loadRegistry() {
   const path = getRegistryPath();
@@ -4555,42 +4658,46 @@ function loadRegistry() {
 function saveRegistry(registry) {
   ensureRegistryDir();
   registry.last_updated = Date.now();
-  writeFileSync4(getRegistryPath(), JSON.stringify(registry, null, 2), "utf-8");
+  writeFileAtomic(getRegistryPath(), JSON.stringify(registry, null, 2), 384);
 }
 function appendToRegistry(snapshot, canonicalFile) {
   try {
-    const registry = loadRegistry();
-    const entry = {
-      id: snapshot.snapshot_id,
-      timestamp: snapshot.timestamp,
-      trigger: snapshot.trigger,
-      project_path: snapshot.project_path,
-      project_name: resolveProjectName(snapshot.project_path),
-      canonical_file: canonicalFile,
-      files_changed_count: snapshot.files_changed.length
-    };
-    registry.snapshots = [entry, ...registry.snapshots.filter((e) => e.id !== entry.id)];
-    if (registry.snapshots.length > MAX_ENTRIES) {
-      registry.snapshots.length = MAX_ENTRIES;
-    }
-    registry.last_project = {
-      path: snapshot.project_path,
-      name: entry.project_name,
-      last_activity_at: snapshot.timestamp
-    };
-    saveRegistry(registry);
+    withFileLock(getRegistryPath(), () => {
+      const registry = loadRegistry();
+      const entry = {
+        id: snapshot.snapshot_id,
+        timestamp: snapshot.timestamp,
+        trigger: snapshot.trigger,
+        project_path: snapshot.project_path,
+        project_name: resolveProjectName(snapshot.project_path),
+        canonical_file: canonicalFile,
+        files_changed_count: snapshot.files_changed.length
+      };
+      registry.snapshots = [entry, ...registry.snapshots.filter((e) => e.id !== entry.id)];
+      if (registry.snapshots.length > MAX_ENTRIES) {
+        registry.snapshots.length = MAX_ENTRIES;
+      }
+      registry.last_project = {
+        path: snapshot.project_path,
+        name: entry.project_name,
+        last_activity_at: snapshot.timestamp
+      };
+      saveRegistry(registry);
+    });
   } catch {
   }
 }
 function touchLastProject(projectPath) {
   try {
-    const registry = loadRegistry();
-    registry.last_project = {
-      path: projectPath,
-      name: resolveProjectName(projectPath),
-      last_activity_at: Date.now()
-    };
-    saveRegistry(registry);
+    withFileLock(getRegistryPath(), () => {
+      const registry = loadRegistry();
+      registry.last_project = {
+        path: projectPath,
+        name: resolveProjectName(projectPath),
+        last_activity_at: Date.now()
+      };
+      saveRegistry(registry);
+    });
   } catch {
   }
 }
@@ -4602,60 +4709,87 @@ function getLastProject() {
   return loadRegistry().last_project ?? null;
 }
 function pruneStale() {
-  const registry = loadRegistry();
-  const live = registry.snapshots.filter((e) => existsSync7(e.canonical_file));
-  if (live.length !== registry.snapshots.length) {
-    registry.snapshots = live;
-    saveRegistry(registry);
-  }
-  return registry;
+  return withFileLock(getRegistryPath(), () => {
+    const registry = loadRegistry();
+    const live = registry.snapshots.filter((e) => existsSync7(e.canonical_file));
+    if (live.length !== registry.snapshots.length) {
+      registry.snapshots = live;
+      saveRegistry(registry);
+    }
+    return registry;
+  });
 }
 
 // src/snapshot/capture.ts
 async function captureSnapshot(options) {
   const config = loadConfig(options.cwd);
   const storagePath = getStoragePath(options.cwd, config);
-  const state = loadSessionState(storagePath, options.sessionId);
-  const { entries } = parseTranscript(options.transcriptPath);
-  const extraction = extractFilesAndTools(entries, { projectPath: options.cwd });
-  const snapshotId = generateSnapshotId();
-  const priorSnapshot = loadLatestSnapshot(storagePath);
-  const snapshot = {
-    snapshot_id: snapshotId,
-    timestamp: Date.now(),
-    session_id: options.sessionId ?? state.session_id ?? "unknown",
-    project_path: options.cwd,
-    trigger: options.trigger,
-    compaction_cycle: state.compaction_count,
-    files_changed: extraction.files_changed,
-    tools_summary: extraction.tools_summary,
-    prior_snapshot_id: priorSnapshot?.snapshot_id,
-    context_remaining_pct: options.contextUsage?.remainingFraction,
-    context_used_pct: options.contextUsage?.usedFraction,
-    token_estimate: options.contextUsage?.usedTokens,
-    context_limit_tokens: options.contextUsage?.contextLimitTokens,
-    model: options.contextUsage?.model
-  };
-  const hasContent = snapshot.files_changed.length > 0 || snapshot.trigger === "manual" || snapshot.trigger === "token_threshold";
-  if (hasContent) {
-    storeSnapshot(storagePath, snapshot);
-    const markdown = compressToMarkdown(snapshot);
-    writeLatestMd(storagePath, markdown);
-    writeTrails(storagePath, snapshot);
-    const canonicalFile = join8(getSnapshotsDir(storagePath), `${snapshot.snapshot_id}.json`);
-    appendToRegistry(snapshot, canonicalFile);
-  }
-  const updatedState = updateSnapshotTime(state);
-  const finalState = incrementSnapshotCount(updatedState);
-  saveSessionState(storagePath, options.sessionId, finalState);
-  return snapshot;
+  return withFileLock(join9(storagePath, "capture"), () => {
+    const state = loadSessionState(storagePath, options.sessionId);
+    const priorSnapshot = loadLatestSnapshot(storagePath);
+    const stat = statSync5(options.transcriptPath);
+    const identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+    const canResume = priorSnapshot?.transcript_source === options.transcriptPath && priorSnapshot.transcript_identity === identity && (priorSnapshot.transcript_offset ?? Infinity) <= stat.size;
+    if (canResume && priorSnapshot.transcript_offset === stat.size && options.trigger !== "manual" && options.trigger !== "token_threshold") return priorSnapshot;
+    const offset = canResume ? priorSnapshot.transcript_offset : 0;
+    const { entries, bytesRead } = parseTranscript(options.transcriptPath, { startOffset: offset });
+    const extraction = extractFilesAndTools(entries, { projectPath: options.cwd });
+    const snapshotId = generateSnapshotId();
+    if (canResume && priorSnapshot) {
+      const files = new Map(priorSnapshot.files_changed.map((f) => [f.path, { ...f }]));
+      for (const file of extraction.files_changed) {
+        const old = files.get(file.path);
+        files.set(file.path, old ? {
+          ...file,
+          operations: [.../* @__PURE__ */ new Set([...old.operations, ...file.operations])],
+          lines_changed: (old.lines_changed || 0) + (file.lines_changed || 0)
+        } : file);
+      }
+      extraction.files_changed = [...files.values()];
+      for (const [tool, count] of Object.entries(priorSnapshot.tools_summary)) {
+        extraction.tools_summary[tool] = (extraction.tools_summary[tool] || 0) + count;
+      }
+    }
+    const snapshot = {
+      snapshot_id: snapshotId,
+      timestamp: Date.now(),
+      session_id: options.sessionId ?? state.session_id ?? "unknown",
+      project_path: options.cwd,
+      trigger: options.trigger,
+      compaction_cycle: state.compaction_count,
+      files_changed: extraction.files_changed,
+      tools_summary: extraction.tools_summary,
+      prior_snapshot_id: priorSnapshot?.snapshot_id,
+      transcript_source: options.transcriptPath,
+      transcript_identity: identity,
+      transcript_offset: bytesRead,
+      context_remaining_pct: options.contextUsage?.remainingFraction,
+      context_used_pct: options.contextUsage?.usedFraction,
+      token_estimate: options.contextUsage?.usedTokens,
+      context_limit_tokens: options.contextUsage?.contextLimitTokens,
+      model: options.contextUsage?.model
+    };
+    const hasContent = snapshot.files_changed.length > 0 || snapshot.trigger === "manual" || snapshot.trigger === "token_threshold";
+    if (hasContent) {
+      storeSnapshot(storagePath, snapshot);
+      const markdown = compressToMarkdown(snapshot);
+      writeLatestMd(storagePath, markdown);
+      writeTrails(storagePath, snapshot);
+      const canonicalFile = join9(getSnapshotsDir(storagePath), `${snapshot.snapshot_id}.json`);
+      appendToRegistry(snapshot, canonicalFile);
+    }
+    const updatedState = updateSnapshotTime(state);
+    const finalState = incrementSnapshotCount(updatedState);
+    saveSessionState(storagePath, options.sessionId, finalState);
+    return snapshot;
+  });
 }
 
 // src/trails/reader.ts
 import { existsSync as existsSync8, readFileSync as readFileSync8 } from "node:fs";
-import { join as join9 } from "node:path";
+import { join as join10 } from "node:path";
 function readContextMd(storagePath) {
-  const contextPath = join9(storagePath, "bookmark.context.md");
+  const contextPath = join10(storagePath, "bookmark.context.md");
   if (!existsSync8(contextPath)) return null;
   try {
     const content = readFileSync8(contextPath, "utf-8");
@@ -4667,22 +4801,22 @@ function readContextMd(storagePath) {
 }
 
 // src/restore/index.ts
-import { existsSync as existsSync10, readFileSync as readFileSync12, statSync as statSync6, unlinkSync as unlinkSync3 } from "node:fs";
-import { join as join13 } from "node:path";
+import { existsSync as existsSync10, readFileSync as readFileSync12, statSync as statSync8, unlinkSync as unlinkSync3 } from "node:fs";
+import { join as join14 } from "node:path";
 
 // src/handoff/reset-marker.ts
-import { readFileSync as readFileSync10, renameSync as renameSync3, statSync as statSync5 } from "node:fs";
-import { join as join11 } from "node:path";
+import { readFileSync as readFileSync10, renameSync as renameSync3, statSync as statSync7 } from "node:fs";
+import { join as join12 } from "node:path";
 
 // src/handoff/toggle.ts
-import { readFileSync as readFileSync9, statSync as statSync4 } from "node:fs";
-import { join as join10 } from "node:path";
+import { readFileSync as readFileSync9, statSync as statSync6 } from "node:fs";
+import { join as join11 } from "node:path";
 var ET_MARKER_MAX_AGE_MS = 10 * 60 * 1e3;
 var ET_DRIVING_MAX_AGE_MS = 60 * 1e3;
 function readEasyTerminalToggle(env = process.env) {
   const stateDir = easyTerminalStateDir(env);
   try {
-    const parsed = JSON.parse(readFileSync9(join10(stateDir, "settings", "context-handoff.json"), "utf-8"));
+    const parsed = JSON.parse(readFileSync9(join11(stateDir, "settings", "context-handoff.json"), "utf-8"));
     return !(parsed && typeof parsed === "object" && parsed.enabled === false);
   } catch {
     return true;
@@ -4699,8 +4833,8 @@ function isEasyTerminalDriving(env = process.env, now = Date.now()) {
   const fileName = pane ? paneFileName(pane) : null;
   if (!fileName) return false;
   try {
-    const path = join10(easyTerminalStateDir(env), "context-handoff", "driving", `${fileName}.json`);
-    if (now - statSync4(path).mtimeMs > ET_DRIVING_MAX_AGE_MS) return false;
+    const path = join11(easyTerminalStateDir(env), "context-handoff", "driving", `${fileName}.json`);
+    if (now - statSync6(path).mtimeMs > ET_DRIVING_MAX_AGE_MS) return false;
   } catch {
     return false;
   }
@@ -4712,9 +4846,9 @@ function readResetMarker(env = process.env, now = Date.now()) {
   const pane = env.EASY_TERMINAL_PANE_ID?.trim();
   const fileName = pane ? paneFileName(pane) : null;
   if (!fileName) return null;
-  const markerPath = join11(easyTerminalStateDir(env), "context-handoff", "resets", `${fileName}.json`);
+  const markerPath = join12(easyTerminalStateDir(env), "context-handoff", "resets", `${fileName}.json`);
   try {
-    if (now - statSync5(markerPath).mtimeMs > ET_MARKER_MAX_AGE_MS) return null;
+    if (now - statSync7(markerPath).mtimeMs > ET_MARKER_MAX_AGE_MS) return null;
     const parsed = JSON.parse(readFileSync10(markerPath, "utf-8"));
     if (typeof parsed.path !== "string" || !parsed.path || typeof parsed.sha256 !== "string" || !parsed.sha256) {
       return null;
@@ -4740,8 +4874,8 @@ function consumeResetMarker(marker) {
 // src/handoff/lineage.ts
 import { createHash as createHash2 } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync as existsSync9, mkdirSync as mkdirSync6, readFileSync as readFileSync11, readdirSync as readdirSync4, renameSync as renameSync4, unlinkSync as unlinkSync2 } from "node:fs";
-import { join as join12 } from "node:path";
+import { existsSync as existsSync9, mkdirSync as mkdirSync7, readFileSync as readFileSync11, readdirSync as readdirSync4, renameSync as renameSync4, unlinkSync as unlinkSync2 } from "node:fs";
+import { join as join13 } from "node:path";
 var INDEX_MARKER = "<!-- BOOKMARK_INDEX generated -->";
 function sha256File(path) {
   return createHash2("sha256").update(readFileSync11(path)).digest("hex");
@@ -4799,15 +4933,15 @@ function writeLineage(storagePath, fields) {
   return record;
 }
 function migrateLegacyContextMd(storagePath, now = /* @__PURE__ */ new Date()) {
-  const contextPath = join12(storagePath, "bookmark.context.md");
+  const contextPath = join13(storagePath, "bookmark.context.md");
   try {
     if (isGeneratedIndex(readFileSync11(contextPath, "utf-8"))) return null;
   } catch {
     return null;
   }
-  const legacyDir = join12(getSessionsDir(storagePath), "legacy");
-  mkdirSync6(legacyDir, { recursive: true });
-  const claimed = join12(legacyDir, `.claim.${process.pid}.${now.getTime()}.md`);
+  const legacyDir = join13(getSessionsDir(storagePath), "legacy");
+  mkdirSync7(legacyDir, { recursive: true });
+  const claimed = join13(legacyDir, `.claim.${process.pid}.${now.getTime()}.md`);
   try {
     renameSync4(contextPath, claimed);
   } catch {
@@ -4820,9 +4954,9 @@ function migrateLegacyContextMd(storagePath, now = /* @__PURE__ */ new Date()) {
     }
     return null;
   }
-  let destination = join12(legacyDir, "handoff.md");
+  let destination = join13(legacyDir, "handoff.md");
   if (existsSync9(destination)) {
-    destination = join12(legacyDir, `handoff.${now.toISOString().replace(/[:.]/g, "-")}.md`);
+    destination = join13(legacyDir, `handoff.${now.toISOString().replace(/[:.]/g, "-")}.md`);
   }
   renameSync4(claimed, destination);
   return writeLineage(storagePath, {
@@ -4852,7 +4986,7 @@ function listLineage(storagePath) {
   } catch {
     return [];
   }
-  return names.map((name) => parseRecord(join12(dir, name))).filter((record) => record !== null && existsSync9(record.handoff_path)).sort((a, b) => b.sealed_at.localeCompare(a.sealed_at));
+  return names.map((name) => parseRecord(join13(dir, name))).filter((record) => record !== null && existsSync9(record.handoff_path)).sort((a, b) => b.sealed_at.localeCompare(a.sealed_at));
 }
 function buildHandoffIndex(storagePath, now = /* @__PURE__ */ new Date()) {
   const records = listLineage(storagePath);
@@ -4878,7 +5012,7 @@ function buildHandoffIndex(storagePath, now = /* @__PURE__ */ new Date()) {
 }
 function writeHandoffIndex(storagePath, now = /* @__PURE__ */ new Date()) {
   migrateLegacyContextMd(storagePath, now);
-  writeFileAtomic(join12(storagePath, "bookmark.context.md"), buildHandoffIndex(storagePath, now));
+  writeFileAtomic(join13(storagePath, "bookmark.context.md"), buildHandoffIndex(storagePath, now));
 }
 function verifyHandoff(path, expectedSha) {
   if (!existsSync9(path)) return { ok: false, actual: null, reason: "missing" };
@@ -4925,7 +5059,7 @@ function restoreContext(options) {
   const sessionId = options.sessionId;
   const lineageRecords = listLineage(storagePath);
   handleSessionTransition(storagePath, options, config.thresholds);
-  const stopRequestedPath = join13(storagePath, ".stop-requested");
+  const stopRequestedPath = join14(storagePath, ".stop-requested");
   if (existsSync10(stopRequestedPath)) {
     try {
       unlinkSync3(stopRequestedPath);
@@ -4983,7 +5117,7 @@ function restoreContext(options) {
   }
   const rawContextMd = readContextMd(storagePath);
   if (rawContextMd && !isGeneratedIndex(rawContextMd) && isContextMdUseful(rawContextMd)) {
-    const contextPath = join13(storagePath, "bookmark.context.md");
+    const contextPath = join14(storagePath, "bookmark.context.md");
     const { identity, bodyWithoutIdentity } = parseIdentity(rawContextMd);
     if (identity?.scope === "home") {
       const target = followPointer(identity);
@@ -5101,7 +5235,7 @@ function isContextMdUseful(content) {
 }
 function getAgeHours(path) {
   try {
-    const mtime = statSync6(path).mtimeMs;
+    const mtime = statSync8(path).mtimeMs;
     return Math.round((Date.now() - mtime) / (1e3 * 60 * 60));
   } catch {
     return null;
@@ -5191,17 +5325,17 @@ function checkTimeInterval(state) {
 }
 
 // src/threshold/token-usage.ts
-import { closeSync, existsSync as existsSync12, fstatSync, openSync, readSync, statSync as statSync7 } from "node:fs";
+import { closeSync as closeSync2, existsSync as existsSync12, fstatSync, openSync as openSync2, readSync as readSync2, statSync as statSync9 } from "node:fs";
 
 // src/threshold/model-catalog.ts
 import { existsSync as existsSync11, readFileSync as readFileSync13 } from "node:fs";
 import { homedir as homedir4 } from "node:os";
-import { join as join14 } from "node:path";
+import { join as join15 } from "node:path";
 var MODEL_CATALOG_URL = "https://models.dev/api.json";
 function modelCatalogPath(env = process.env) {
   if (env.BOOKMARK_MODEL_CATALOG) return env.BOOKMARK_MODEL_CATALOG;
-  const cacheRoot = env.XDG_CACHE_HOME || join14(homedir4(), ".cache");
-  return join14(cacheRoot, "bookmark", "models-dev.json");
+  const cacheRoot = env.XDG_CACHE_HOME || join15(homedir4(), ".cache");
+  return join15(cacheRoot, "bookmark", "models-dev.json");
 }
 var cached = null;
 function readCatalog(path) {
@@ -5371,14 +5505,14 @@ function readTailLines(path) {
   if (!existsSync12(path)) return null;
   let fd;
   try {
-    if (!statSync7(path).isFile()) return null;
-    fd = openSync(path, "r");
+    if (!statSync9(path).isFile()) return null;
+    fd = openSync2(path, "r");
     const size = fstatSync(fd).size;
     if (size === 0) return null;
     const bytesToRead = Math.min(size, MAX_TAIL_BYTES);
     const start = size - bytesToRead;
     const buffer = Buffer.alloc(bytesToRead);
-    readSync(fd, buffer, 0, bytesToRead, start);
+    readSync2(fd, buffer, 0, bytesToRead, start);
     let text = buffer.toString("utf8");
     if (start > 0) {
       const firstNewline = text.indexOf("\n");
@@ -5388,7 +5522,7 @@ function readTailLines(path) {
   } catch {
     return null;
   } finally {
-    if (fd !== void 0) closeSync(fd);
+    if (fd !== void 0) closeSync2(fd);
   }
 }
 function observation(model, usedTokens, contextLimitTokens, source, estimated) {
@@ -5517,14 +5651,14 @@ function buildHandoffPrompt(options) {
 import { existsSync as existsSync14 } from "node:fs";
 
 // src/context/freshness.ts
-import { existsSync as existsSync13, readFileSync as readFileSync14, statSync as statSync8 } from "node:fs";
+import { existsSync as existsSync13, readFileSync as readFileSync14, statSync as statSync10 } from "node:fs";
 var MAX_HANDOFF_AGE_MS = 2 * 60 * 1e3;
 function isContextMdFresh(contextPath, markerPath, now = Date.now()) {
   if (!existsSync13(contextPath)) return false;
   try {
-    const contextStat = statSync8(contextPath);
+    const contextStat = statSync10(contextPath);
     if (now - contextStat.mtimeMs >= MAX_HANDOFF_AGE_MS) return false;
-    if (existsSync13(markerPath) && contextStat.mtimeMs <= statSync8(markerPath).mtimeMs) {
+    if (existsSync13(markerPath) && contextStat.mtimeMs <= statSync10(markerPath).mtimeMs) {
       return false;
     }
     return passesHandoffChecks(contextPath);
@@ -5534,7 +5668,7 @@ function isContextMdFresh(contextPath, markerPath, now = Date.now()) {
 }
 function passesHandoffChecks(path) {
   try {
-    if (statSync8(path).size < 200) return false;
+    if (statSync10(path).size < 200) return false;
     const content = readFileSync14(path, "utf8");
     if (content.startsWith("<!-- BOOKMARK_INDEX")) return false;
     const { identity } = parseIdentity(content);
@@ -5604,22 +5738,22 @@ function decideStop(context) {
 }
 
 // src/setup/auto-setup.ts
-import { existsSync as existsSync18, mkdirSync as mkdirSync9, readFileSync as readFileSync17, writeFileSync as writeFileSync5, realpathSync as realpathSync3, symlinkSync, unlinkSync as unlinkSync4 } from "node:fs";
-import { join as join18, dirname as dirname6 } from "node:path";
+import { existsSync as existsSync18, mkdirSync as mkdirSync10, readFileSync as readFileSync17, writeFileSync as writeFileSync6, realpathSync as realpathSync3, symlinkSync, unlinkSync as unlinkSync4 } from "node:fs";
+import { join as join19, dirname as dirname7 } from "node:path";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // src/setup/configure-hooks.ts
-import { existsSync as existsSync17, mkdirSync as mkdirSync8, realpathSync as realpathSync2 } from "node:fs";
-import { join as join17 } from "node:path";
+import { existsSync as existsSync17, mkdirSync as mkdirSync9, realpathSync as realpathSync2 } from "node:fs";
+import { join as join18 } from "node:path";
 
 // src/host/manifest.ts
 import { existsSync as existsSync15, readdirSync as readdirSync5, readFileSync as readFileSync15 } from "node:fs";
-import { dirname as dirname4, join as join15 } from "node:path";
+import { dirname as dirname5, join as join16 } from "node:path";
 import { fileURLToPath } from "node:url";
 var ROLES = ["restore", "context-check", "precompact", "stop"];
 function hostsDir() {
-  const here = dirname4(fileURLToPath(import.meta.url));
-  const candidates = [join15(here, "..", "..", "hosts"), join15(here, "..", "..", "..", "hosts")];
+  const here = dirname5(fileURLToPath(import.meta.url));
+  const candidates = [join16(here, "..", "..", "hosts"), join16(here, "..", "..", "..", "hosts")];
   return candidates.find((dir) => existsSync15(dir)) ?? candidates[0];
 }
 var cache = /* @__PURE__ */ new Map();
@@ -5635,7 +5769,7 @@ function loadManifest(id, dir = hostsDir()) {
   const key = `${dir}:${id}`;
   const cached2 = cache.get(key);
   if (cached2) return cached2;
-  const path = join15(dir, `${id}.json`);
+  const path = join16(dir, `${id}.json`);
   if (!existsSync15(path)) return null;
   try {
     const manifest = JSON.parse(readFileSync15(path, "utf-8"));
@@ -5659,17 +5793,17 @@ function loadAllManifests(dir = hostsDir()) {
 }
 
 // src/host/install.ts
-import { chmodSync as chmodSync2, copyFileSync, existsSync as existsSync16, lstatSync, mkdirSync as mkdirSync7, readFileSync as readFileSync16, realpathSync, statSync as statSync9 } from "node:fs";
+import { chmodSync as chmodSync2, copyFileSync, existsSync as existsSync16, lstatSync, mkdirSync as mkdirSync8, readFileSync as readFileSync16, realpathSync, statSync as statSync11 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { homedir as homedir5 } from "node:os";
-import { basename as basename4, dirname as dirname5, join as join16 } from "node:path";
+import { basename as basename4, dirname as dirname6, join as join17 } from "node:path";
 import { fileURLToPath as fileURLToPath2 } from "node:url";
 var PACKAGE_NAME = "@tyroneross/bookmark";
 var SAFE_BIN = /^[A-Za-z0-9@/._ -]+$/;
-var PACKAGE_ROOT = join16(dirname5(fileURLToPath2(import.meta.url)), "..", "..");
+var PACKAGE_ROOT = join17(dirname6(fileURLToPath2(import.meta.url)), "..", "..");
 function packageVersion() {
   try {
-    return JSON.parse(readFileSync16(join16(PACKAGE_ROOT, "package.json"), "utf-8")).version;
+    return JSON.parse(readFileSync16(join17(PACKAGE_ROOT, "package.json"), "utf-8")).version;
   } catch {
     return "";
   }
@@ -5677,10 +5811,10 @@ function packageVersion() {
 var UNPINNED_BIN = `npx -y ${PACKAGE_NAME}`;
 var PINNED_BIN = packageVersion() ? `npx -y ${PACKAGE_NAME}@${packageVersion()}` : UNPINNED_BIN;
 function isLocalCheckout(root = PACKAGE_ROOT) {
-  return existsSync16(join16(root, ".git")) || !root.split(/[\\/]/).includes("node_modules");
+  return existsSync16(join17(root, ".git")) || !root.split(/[\\/]/).includes("node_modules");
 }
 function defaultBin(root = PACKAGE_ROOT) {
-  const local = `node ${join16(root, "dist", "cli", "index.js")}`;
+  const local = `node ${join17(root, "dist", "cli", "index.js")}`;
   if (isLocalCheckout(root) && SAFE_BIN.test(local)) return { bin: local, source: "local-build" };
   return { bin: PINNED_BIN, source: "pinned-npx" };
 }
@@ -5772,7 +5906,7 @@ function mergeHookConfig(existing, manifest, entries) {
   return { merged, changed: JSON.stringify(merged) !== JSON.stringify(existing ?? {}) };
 }
 function expandHome(path, home = homedir5()) {
-  return path === "~" ? home : path.startsWith("~/") ? join16(home, path.slice(2)) : path;
+  return path === "~" ? home : path.startsWith("~/") ? join17(home, path.slice(2)) : path;
 }
 function readJsonConfig(path) {
   if (!existsSync16(path)) return {};
@@ -5788,7 +5922,7 @@ function readJsonConfig(path) {
   return parsed;
 }
 function backupDirFor(host, home = homedir5()) {
-  return join16(home, ".bookmark", "backups", host);
+  return join17(home, ".bookmark", "backups", host);
 }
 function isSymlink(path) {
   try {
@@ -5806,13 +5940,13 @@ function writeJsonConfig(path, config, options) {
   let mode = 384;
   let backupPath = null;
   if (existsSync16(target)) {
-    const stats = statSync9(target);
+    const stats = statSync11(target);
     if (!stats.isFile()) throw new Error(`${target} is not a regular file; left it untouched`);
     mode = stats.mode & 511;
     const stamp = (options.now ?? /* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-");
     const dir = options.backupDir;
-    mkdirSync7(dir, { recursive: true, mode: 448 });
-    backupPath = join16(dir, `${basename4(target)}.${stamp}`);
+    mkdirSync8(dir, { recursive: true, mode: 448 });
+    backupPath = join17(dir, `${basename4(target)}.${stamp}`);
     copyFileSync(target, backupPath);
     chmodSync2(backupPath, 384);
   }
@@ -5867,17 +6001,17 @@ function claudePlan() {
   return { manifest, entries: planEntries(manifest) };
 }
 function resolvePluginPath(cwd) {
-  const localPlugin = join17(cwd, "node_modules", "@tyroneross", "bookmark", ".claude-plugin");
+  const localPlugin = join18(cwd, "node_modules", "@tyroneross", "bookmark", ".claude-plugin");
   if (existsSync17(localPlugin)) {
     return "node_modules/@tyroneross/bookmark/.claude-plugin";
   }
   const home = process.env.HOME || process.env.USERPROFILE || "";
   if (home) {
-    const globalLink = join17(home, ".claude", "plugins", "bookmark");
+    const globalLink = join18(home, ".claude", "plugins", "bookmark");
     if (existsSync17(globalLink)) {
       try {
         const resolved = realpathSync2(globalLink);
-        return join17(resolved, ".claude-plugin");
+        return join18(resolved, ".claude-plugin");
       } catch {
       }
     }
@@ -5885,10 +6019,10 @@ function resolvePluginPath(cwd) {
   return null;
 }
 function configureHooks(cwd) {
-  const settingsDir = join17(cwd, ".claude");
-  const settingsPath = join17(settingsDir, "settings.json");
+  const settingsDir = join18(cwd, ".claude");
+  const settingsPath = join18(settingsDir, "settings.json");
   if (!existsSync17(settingsDir)) {
-    mkdirSync8(settingsDir, { recursive: true });
+    mkdirSync9(settingsDir, { recursive: true });
   }
   const settings = readJsonConfig(settingsPath);
   const original = JSON.parse(JSON.stringify(settings));
@@ -5909,10 +6043,10 @@ function configureHooks(cwd) {
 function configureGlobalHooks() {
   const home = process.env.HOME || process.env.USERPROFILE || "";
   if (!home) return;
-  const settingsDir = join17(home, ".claude");
-  const settingsPath = join17(settingsDir, "settings.json");
+  const settingsDir = join18(home, ".claude");
+  const settingsPath = join18(settingsDir, "settings.json");
   if (!existsSync17(settingsDir)) {
-    mkdirSync8(settingsDir, { recursive: true });
+    mkdirSync9(settingsDir, { recursive: true });
   }
   const settings = readJsonConfig(settingsPath);
   const { manifest, entries } = claudePlan();
@@ -5928,9 +6062,9 @@ var PLUGIN_VERSION = "0.3.2";
 function registerPlugin() {
   const home = process.env.HOME || process.env.USERPROFILE || "";
   if (!home) return false;
-  const pluginsDir = join18(home, ".claude", "plugins");
-  const installedPath = join18(pluginsDir, "installed_plugins.json");
-  const pluginLinkPath = join18(pluginsDir, "bookmark");
+  const pluginsDir = join19(home, ".claude", "plugins");
+  const installedPath = join19(pluginsDir, "installed_plugins.json");
+  const pluginLinkPath = join19(pluginsDir, "bookmark");
   let installPath = pluginLinkPath;
   try {
     if (existsSync18(pluginLinkPath)) {
@@ -5962,8 +6096,8 @@ function registerPlugin() {
     }];
   }
   try {
-    mkdirSync9(pluginsDir, { recursive: true });
-    writeFileSync5(installedPath, JSON.stringify(installed, null, 2), "utf-8");
+    mkdirSync10(pluginsDir, { recursive: true });
+    writeFileSync6(installedPath, JSON.stringify(installed, null, 2), "utf-8");
     return true;
   } catch {
     return false;
@@ -5972,17 +6106,17 @@ function registerPlugin() {
 function ensurePluginSymlink() {
   const home = process.env.HOME || process.env.USERPROFILE || "";
   if (!home) return false;
-  const pluginsDir = join18(home, ".claude", "plugins");
-  const linkPath = join18(pluginsDir, "bookmark");
+  const pluginsDir = join19(home, ".claude", "plugins");
+  const linkPath = join19(pluginsDir, "bookmark");
   if (existsSync18(linkPath)) return true;
   try {
-    const thisDir = dirname6(fileURLToPath3(import.meta.url));
-    const bookmarkRoot = join18(thisDir, "..", "..");
-    const pkgPath = join18(bookmarkRoot, "package.json");
+    const thisDir = dirname7(fileURLToPath3(import.meta.url));
+    const bookmarkRoot = join19(thisDir, "..", "..");
+    const pkgPath = join19(bookmarkRoot, "package.json");
     if (!existsSync18(pkgPath)) return false;
     const pkg = JSON.parse(readFileSync17(pkgPath, "utf-8"));
     if (pkg.name !== "@tyroneross/bookmark") return false;
-    mkdirSync9(pluginsDir, { recursive: true });
+    mkdirSync10(pluginsDir, { recursive: true });
     symlinkSync(bookmarkRoot, linkPath);
     return true;
   } catch {
@@ -6004,9 +6138,9 @@ function reportSkippedHooks(err) {
 function setupProject(cwd) {
   const steps = [];
   migrateLegacyStorage(cwd);
-  const bookmarkPath = join18(cwd, ".bookmark");
-  mkdirSync9(join18(bookmarkPath, "snapshots"), { recursive: true });
-  mkdirSync9(join18(bookmarkPath, "archive"), { recursive: true });
+  const bookmarkPath = join19(cwd, ".bookmark");
+  mkdirSync10(join19(bookmarkPath, "snapshots"), { recursive: true });
+  mkdirSync10(join19(bookmarkPath, "archive"), { recursive: true });
   steps.push("Created .bookmark/ directories");
   try {
     configureHooks(cwd);
@@ -6040,16 +6174,16 @@ function setupProject(cwd) {
 function ensureProjectBootstrapped(cwd) {
   migrateLegacyStorage(cwd);
   cleanStaleContextMd(cwd);
-  const bookmarkPath = join18(cwd, ".bookmark");
+  const bookmarkPath = join19(cwd, ".bookmark");
   if (!existsSync18(bookmarkPath)) {
     try {
-      mkdirSync9(join18(bookmarkPath, "snapshots"), { recursive: true });
+      mkdirSync10(join19(bookmarkPath, "snapshots"), { recursive: true });
     } catch {
     }
   }
 }
 function cleanStaleContextMd(cwd) {
-  const contextPath = join18(cwd, ".bookmark", "bookmark.context.md");
+  const contextPath = join19(cwd, ".bookmark", "bookmark.context.md");
   if (!existsSync18(contextPath)) return;
   try {
     const content = readFileSync17(contextPath, "utf-8");
@@ -6071,10 +6205,10 @@ function autoSetup() {
   }
   const projectRoot = findProjectRoot();
   const isGlobal = process.env.npm_config_global === "true";
-  const hasProject = projectRoot !== "/" && existsSync18(join18(projectRoot, "package.json"));
+  const hasProject = projectRoot !== "/" && existsSync18(join19(projectRoot, "package.json"));
   if (hasProject) {
     try {
-      const pkg = JSON.parse(readFileSync17(join18(projectRoot, "package.json"), "utf-8"));
+      const pkg = JSON.parse(readFileSync17(join19(projectRoot, "package.json"), "utf-8"));
       if (pkg.name === "@tyroneross/bookmark") return;
     } catch {
     }
@@ -6120,7 +6254,7 @@ function autoSetup() {
 function injectGlobalClaudeMd() {
   const home = process.env.HOME || process.env.USERPROFILE || "";
   if (!home) return false;
-  const claudeMdPath = join18(home, ".claude", "CLAUDE.md");
+  const claudeMdPath = join19(home, ".claude", "CLAUDE.md");
   const marker = "## Bookmark";
   let content = "";
   if (existsSync18(claudeMdPath)) {
@@ -6129,18 +6263,18 @@ function injectGlobalClaudeMd() {
     if (!content.endsWith("\n")) content += "\n";
     content += "\n";
   } else {
-    mkdirSync9(join18(home, ".claude"), { recursive: true });
+    mkdirSync10(join19(home, ".claude"), { recursive: true });
   }
   content += `${marker}
 
 Session continuity via hooks. Each session writes its own handoff to the path the prompt names (\`.bookmark/sessions/<session id>/handoff.md\`); session start restores the handoff linked to this pane or process.
 File changes tracked automatically in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
 `;
-  writeFileSync5(claudeMdPath, content, "utf-8");
+  writeFileSync6(claudeMdPath, content, "utf-8");
   return true;
 }
 function injectGitignore(cwd) {
-  const gitignorePath = join18(cwd, ".gitignore");
+  const gitignorePath = join19(cwd, ".gitignore");
   const entry = ".bookmark/";
   let content = "";
   if (existsSync18(gitignorePath)) {
@@ -6152,11 +6286,11 @@ function injectGitignore(cwd) {
 # Bookmark snapshot data
 ${entry}
 `;
-  writeFileSync5(gitignorePath, content, "utf-8");
+  writeFileSync6(gitignorePath, content, "utf-8");
   return true;
 }
 function injectClaudeMd(cwd) {
-  const claudeMdPath = join18(cwd, ".claude", "CLAUDE.md");
+  const claudeMdPath = join19(cwd, ".claude", "CLAUDE.md");
   const marker = "## Bookmark";
   const oldMarker = "## Bookmark \u2014 Context Snapshots";
   let content = "";
@@ -6166,14 +6300,14 @@ function injectClaudeMd(cwd) {
     if (!content.endsWith("\n")) content += "\n";
     content += "\n";
   } else {
-    mkdirSync9(join18(cwd, ".claude"), { recursive: true });
+    mkdirSync10(join19(cwd, ".claude"), { recursive: true });
   }
   content += `${marker}
 
 Session continuity via hooks. Each session writes its own handoff to the path the prompt names (\`.bookmark/sessions/<session id>/handoff.md\`); session start restores the handoff linked to this pane or process.
 File changes tracked in \`trails/files.md\`. Commands: \`/bookmark:snapshot\`, \`/bookmark:status\`, \`/bookmark:list\`.
 `;
-  writeFileSync5(claudeMdPath, content, "utf-8");
+  writeFileSync6(claudeMdPath, content, "utf-8");
   return true;
 }
 var isPostinstall = process.env.npm_lifecycle_event === "postinstall" || process.argv[1]?.endsWith("auto-setup.js");
@@ -6182,7 +6316,7 @@ if (isPostinstall) {
 }
 
 // src/host/adapter.ts
-import { statSync as statSync10 } from "node:fs";
+import { statSync as statSync12 } from "node:fs";
 function firstString(stdin, keys) {
   for (const key of keys) {
     const value = stdin[key];
@@ -6199,7 +6333,7 @@ function firstBoolean(stdin, keys) {
 function regularFile(path) {
   if (!path) return void 0;
   try {
-    return statSync10(path).isFile() ? path : void 0;
+    return statSync12(path).isFile() ? path : void 0;
   } catch {
     return path;
   }
@@ -6333,7 +6467,7 @@ function resolveAdapter(stdin, explicitHost, env = process.env) {
 
 // src/cli/index.ts
 var pkgVersion = JSON.parse(
-  readFileSync18(join19(dirname7(fileURLToPath4(import.meta.url)), "../../package.json"), "utf-8")
+  readFileSync18(join20(dirname8(fileURLToPath4(import.meta.url)), "../../package.json"), "utf-8")
 ).version;
 var program2 = new Command();
 program2.name("bookmark").description("Context snapshots for Claude Code \u2014 session continuity across compactions and terminals").version(pkgVersion);
@@ -6694,7 +6828,7 @@ program2.command("stop").description("Stop hook \u2014 capture files, conditiona
     try {
       const storage = resolveHookStorage(opts.cwd ?? process.cwd());
       if (storage && !storage.homePointer && existsSync19(storage.storagePath)) {
-        appendFileSync(join19(storage.storagePath, ".errors.log"), `[${(/* @__PURE__ */ new Date()).toISOString()}] stop: ${err.message}
+        appendFileSync(join20(storage.storagePath, ".errors.log"), `[${(/* @__PURE__ */ new Date()).toISOString()}] stop: ${err.message}
 `);
       }
     } catch {
@@ -6864,7 +6998,7 @@ program2.command("show [snapshot_id]").description("Show full snapshot detail").
   if (!snapshot) {
     const entry = findById(snapshotId);
     if (entry) {
-      const otherStorage = join19(entry.project_path, config.storagePath);
+      const otherStorage = join20(entry.project_path, config.storagePath);
       snapshot = loadSnapshot(otherStorage, snapshotId);
       if (snapshot) {
         console.log(`[bookmark: resolved via registry \u2192 ${entry.project_name} (${entry.project_path})]`);
@@ -6894,7 +7028,7 @@ program2.command("clear").description("Write a home-scope pointer to the most-re
       const registry = loadRegistry();
       for (const entry of registry.snapshots) {
         if (entry.project_path === home) continue;
-        const candidate = join19(entry.project_path, ".bookmark", "bookmark.context.md");
+        const candidate = join20(entry.project_path, ".bookmark", "bookmark.context.md");
         if (existsSync19(candidate)) {
           targetPath = entry.project_path;
           targetName = entry.project_name;
@@ -6908,7 +7042,7 @@ program2.command("clear").description("Write a home-scope pointer to the most-re
     console.error("Or pass --project <path> to point at a specific project.");
     process.exit(1);
   }
-  let canonicalPath = join19(targetPath, ".bookmark", "bookmark.context.md");
+  let canonicalPath = join20(targetPath, ".bookmark", "bookmark.context.md");
   if (!existsSync19(canonicalPath)) {
     console.error(`No bookmark.context.md at ${canonicalPath}.`);
     console.error("That project has no session summary to restore from.");
@@ -6925,8 +7059,8 @@ program2.command("clear").description("Write a home-scope pointer to the most-re
     if (idx > 0) targetPath = canonicalPath.slice(0, idx);
   }
   if (opts.pointer !== false) {
-    const homeDir = join19(homedir6(), ".bookmark");
-    if (!existsSync19(homeDir)) mkdirSync10(homeDir, { recursive: true });
+    const homeDir = join20(homedir6(), ".bookmark");
+    if (!existsSync19(homeDir)) mkdirSync11(homeDir, { recursive: true });
     const pointerBody = [
       `# Bookmark Pointer \u2014 ${targetName}`,
       "",
@@ -6946,7 +7080,7 @@ program2.command("clear").description("Write a home-scope pointer to the most-re
       "started from this directory (or any directory without its own .bookmark/)",
       "will follow the pointer above and restore the canonical context.*"
     ].join("\n");
-    writeFileAtomic(join19(homeDir, "bookmark.context.md"), pointerBody);
+    writeFileAtomic(join20(homeDir, "bookmark.context.md"), pointerBody);
     console.error(`[bookmark] Home pointer \u2192 ${targetName} (${canonicalPath})`);
   }
   if (opts.print !== false) {
@@ -7037,7 +7171,7 @@ program2.command("uninstall").description("Remove bookmark from project").option
   if (opts.removeData) {
     const cwd = opts.cwd ?? process.cwd();
     const config = loadConfig(cwd);
-    console.log(`  3. rm -rf ${join19(cwd, config.storagePath)}`);
+    console.log(`  3. rm -rf ${join20(cwd, config.storagePath)}`);
   }
 });
 program2.command("install").description("Write (or print with --dry-run) one agent host's hook config from hosts/<id>.json").requiredOption("--host <id>", `Host id: ${listHostIds().join("|")}`).option("--dry-run", "Print the merged config and the Bookmark fragment; write nothing").option("--bin <cmd>", `Command hooks run to reach Bookmark (default: ${DEFAULT_BIN})`).action((opts) => {
@@ -7185,12 +7319,12 @@ function updateHomePointer(cwd) {
   try {
     const home = homedir6();
     if (!home || cwd === home) return;
-    const projectContextPath = join19(cwd, ".bookmark", "bookmark.context.md");
+    const projectContextPath = join20(cwd, ".bookmark", "bookmark.context.md");
     if (!existsSync19(projectContextPath)) return;
     const projectName = basename5(cwd).toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9-]/g, "");
-    const homeBookmarkDir = join19(home, ".bookmark");
+    const homeBookmarkDir = join20(home, ".bookmark");
     if (!existsSync19(homeBookmarkDir)) {
-      mkdirSync10(homeBookmarkDir, { recursive: true });
+      mkdirSync11(homeBookmarkDir, { recursive: true });
     }
     const today = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const pointerContent = [
@@ -7210,7 +7344,7 @@ function updateHomePointer(cwd) {
       `> It delegates to the repo-scope bookmark at \`${projectContextPath}\`.`,
       ""
     ].join("\n");
-    writeFileAtomic(join19(homeBookmarkDir, "bookmark.context.md"), pointerContent);
+    writeFileAtomic(join20(homeBookmarkDir, "bookmark.context.md"), pointerContent);
   } catch {
   }
 }
@@ -7229,23 +7363,23 @@ var DIM2 = "\x1B[2m";
 var BOLD = "\x1B[1m";
 var RESET2 = "\x1B[0m";
 function discoverTranscriptPath(cwd) {
-  const claudeProjectsDir = join19(homedir6(), ".claude", "projects");
+  const claudeProjectsDir = join20(homedir6(), ".claude", "projects");
   if (!existsSync19(claudeProjectsDir)) return null;
   try {
     const projectDirs = readdirSync6(claudeProjectsDir);
     const encodedCwd = cwd.replace(/\//g, "-");
     const matchingDir = projectDirs.find((d) => d === encodedCwd);
     if (!matchingDir) return null;
-    const transcriptDir = join19(claudeProjectsDir, matchingDir);
-    const dirStat = statSync11(transcriptDir);
+    const transcriptDir = join20(claudeProjectsDir, matchingDir);
+    const dirStat = statSync13(transcriptDir);
     if (!dirStat.isDirectory()) return null;
     const sessionId = process.env.CLAUDE_SESSION_ID;
     if (sessionId) {
-      const sessionFile = join19(transcriptDir, `${sessionId}.jsonl`);
+      const sessionFile = join20(transcriptDir, `${sessionId}.jsonl`);
       if (existsSync19(sessionFile)) return sessionFile;
     }
     const files = readdirSync6(transcriptDir).filter((f) => f.endsWith(".jsonl")).map((f) => {
-      const s = statSync11(join19(transcriptDir, f));
+      const s = statSync13(join20(transcriptDir, f));
       return { name: f, mtime: s.mtimeMs, size: s.size };
     }).sort((a, b) => {
       const aSubstantial = a.size > 1e4 ? 1 : 0;
@@ -7253,17 +7387,17 @@ function discoverTranscriptPath(cwd) {
       if (aSubstantial !== bSubstantial) return bSubstantial - aSubstantial;
       return b.mtime - a.mtime;
     });
-    return files[0] ? join19(transcriptDir, files[0].name) : null;
+    return files[0] ? join20(transcriptDir, files[0].name) : null;
   } catch {
     return null;
   }
 }
 function askQuestion(question) {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-  return new Promise((resolve3) => {
+  return new Promise((resolve4) => {
     rl.question(question, (answer) => {
       rl.close();
-      resolve3(answer.trim());
+      resolve4(answer.trim());
     });
   });
 }
@@ -7324,9 +7458,9 @@ function emitHook(call, action) {
 }
 async function readHookInput() {
   if (process.stdin.isTTY) return null;
-  return new Promise((resolve3) => {
+  return new Promise((resolve4) => {
     let data = "";
-    const timeout = setTimeout(() => resolve3(null), 1e3);
+    const timeout = setTimeout(() => resolve4(null), 1e3);
     process.stdin.setEncoding("utf-8");
     process.stdin.on("data", (chunk) => {
       data += chunk;
@@ -7334,14 +7468,14 @@ async function readHookInput() {
     process.stdin.on("end", () => {
       clearTimeout(timeout);
       try {
-        resolve3(JSON.parse(data));
+        resolve4(JSON.parse(data));
       } catch {
-        resolve3(null);
+        resolve4(null);
       }
     });
     process.stdin.on("error", () => {
       clearTimeout(timeout);
-      resolve3(null);
+      resolve4(null);
     });
     process.stdin.resume();
   });

@@ -72,7 +72,7 @@ Defined in `hooks/hooks.json`. All are `command` type, invoking the CLI via `npx
 | `SessionStart` | `restore` | Reads `.bookmark/bookmark.context.md` and injects it as restored context |
 | `UserPromptSubmit` | `context-check` | Measures context usage, handles interval capture, and alerts once at each configured token threshold |
 
-To change hook behavior, edit `hooks/hooks.json`. Timeouts are in milliseconds (Stop: 10000, PreCompact: 10000, SessionStart: 5000, UserPromptSubmit: 10000).
+To change hook behavior, edit `hooks/hooks.json`. Timeouts follow each host manifest. Claude/Codex command hook timeouts are seconds (Stop/PreCompact/UserPromptSubmit: 10; SessionStart: 15).
 
 ## Commands (6 slash commands, down from 8)
 

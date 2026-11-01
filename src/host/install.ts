@@ -375,12 +375,12 @@ export const PLUGIN_BUNDLE = 'bundle/cli/index.mjs';
 
 /**
  * Plugin hook command: run the plugin's own committed bundle, so a plugin
- * installed from GitHub runs that commit's code. npx is the fallback for a
- * host that does not set CLAUDE_PLUGIN_ROOT or a copy without the bundle.
+ * installed from GitHub runs that commit's code. A missing bundle is unavailable;
+ * lifecycle hooks never download or install code.
  */
 export function pluginHookCommand(role: Role, fallback: string): string {
   const bundle = `"\${CLAUDE_PLUGIN_ROOT:-}/${PLUGIN_BUNDLE}"`;
-  return `if [ -f ${bundle} ]; then node ${bundle} ${role}; else ${UNPINNED_BIN} ${role}; fi 2>/dev/null || ${fallback}`;
+  return `if [ -f ${bundle} ]; then node ${bundle} ${role}; else printf '{}'; fi 2>/dev/null || ${fallback}`;
 }
 
 export function pluginHooksConfig(claude: HostManifest): HookConfig {

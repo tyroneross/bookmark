@@ -1,4 +1,4 @@
-import { readFileSync, existsSync, statSync } from 'node:fs';
+import { openSync, readSync, closeSync, existsSync, statSync } from 'node:fs';
 import type { TranscriptEntry, TranscriptContent } from '../types.js';
 
 export interface ParseOptions {
@@ -29,11 +29,21 @@ export function parseTranscript(transcriptPath: string, options?: ParseOptions):
     return { entries: [], bytesRead: totalBytes, totalBytes };
   }
 
-  const raw = readFileSync(transcriptPath, 'utf-8');
+  const fd = openSync(transcriptPath, 'r');
+  const buffer = Buffer.alloc(totalBytes - startOffset);
+  let loaded = 0;
+  try {
+    while (loaded < buffer.length) {
+      const n = readSync(fd, buffer, loaded, buffer.length - loaded, startOffset + loaded);
+      if (!n) break;
+      loaded += n;
+    }
+  } finally { closeSync(fd); }
+  const raw = buffer.subarray(0, loaded).toString('utf-8');
   const lines = raw.split('\n');
 
   const entries: TranscriptEntry[] = [];
-  let currentByteOffset = 0;
+  let currentByteOffset = startOffset;
 
   for (const line of lines) {
     const lineBytes = Buffer.byteLength(line + '\n', 'utf-8');
@@ -101,13 +111,14 @@ export function parseTranscript(transcriptPath: string, options?: ParseOptions):
         }
       }
     } catch {
-      // Skip malformed lines
+      // Keep an incomplete final record for the next incremental read.
+      if (currentByteOffset >= totalBytes && !raw.endsWith("\n")) currentByteOffset -= lineBytes;
     }
   }
 
   return {
     entries,
-    bytesRead: totalBytes,
+    bytesRead: Math.min(totalBytes, currentByteOffset),
     totalBytes,
   };
 }
@@ -116,6 +127,22 @@ export function parseTranscript(transcriptPath: string, options?: ParseOptions):
  * Normalize various transcript JSON formats into a consistent TranscriptEntry.
  */
 function normalizeEntry(raw: Record<string, unknown>): TranscriptEntry | null {
+  if (raw.type === 'response_item' && raw.payload && typeof raw.payload === 'object') {
+    const p = raw.payload as Record<string, unknown>;
+    if (p.type === 'function_call' || p.type === 'custom_tool_call') {
+      let input: Record<string, unknown> = {};
+      if (p.type === 'custom_tool_call') input = { command: p.input };
+      else {
+        try { input = JSON.parse(String(p.arguments || '{}')); } catch { return null; }
+      }
+      return { type: 'tool_use', content: '', tool_name: String(p.name || ''), tool_input: input };
+    }
+    if (p.type === 'function_call_output' || p.type === 'custom_tool_call_output') {
+      return { type: 'tool_result', content: String(p.output || '') };
+    }
+    if (p.type === 'message') raw = { ...p };
+  }
+
   // Handle different transcript formats
   const type = inferType(raw);
   if (!type) return null;

@@ -1,3 +1,5 @@
+import { statSync } from 'node:fs';
+import { withFileLock } from '../util/file-lock.js';
 import { join } from 'node:path';
 import { parseTranscript } from '../transcript/parser.js';
 import { extractFilesAndTools } from '../transcript/extractor.js';
@@ -35,10 +37,20 @@ export interface CaptureOptions {
 export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot> {
   const config = loadConfig(options.cwd);
   const storagePath = getStoragePath(options.cwd, config);
+  return withFileLock(join(storagePath, "capture"), () => {
   const state = loadSessionState(storagePath, options.sessionId);
+  const priorSnapshot = loadLatestSnapshot(storagePath);
+  const stat = statSync(options.transcriptPath);
+  const identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
+  const canResume = priorSnapshot?.transcript_source === options.transcriptPath
+    && priorSnapshot.transcript_identity === identity
+    && (priorSnapshot.transcript_offset ?? Infinity) <= stat.size;
+  if (canResume && priorSnapshot!.transcript_offset === stat.size
+      && options.trigger !== "manual" && options.trigger !== "token_threshold") return priorSnapshot!;
+  const offset = canResume ? priorSnapshot!.transcript_offset : 0;
 
   // 1. Parse transcript
-  const { entries } = parseTranscript(options.transcriptPath);
+  const { entries, bytesRead } = parseTranscript(options.transcriptPath, { startOffset: offset });
 
   // 2. Extract file changes + tool usage only (working parts of extractor)
   // Intent, decisions, and progress are NOT extracted — Claude writes the handoff.
@@ -46,7 +58,20 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
 
   // 3. Build snapshot
   const snapshotId = generateSnapshotId();
-  const priorSnapshot = loadLatestSnapshot(storagePath);
+  if (canResume && priorSnapshot) {
+    const files = new Map(priorSnapshot.files_changed.map(f => [f.path, { ...f }]));
+    for (const file of extraction.files_changed) {
+      const old = files.get(file.path);
+      files.set(file.path, old ? { ...file,
+        operations: [...new Set([...old.operations, ...file.operations])],
+        lines_changed: (old.lines_changed || 0) + (file.lines_changed || 0),
+      } : file);
+    }
+    extraction.files_changed = [...files.values()];
+    for (const [tool, count] of Object.entries(priorSnapshot.tools_summary)) {
+      extraction.tools_summary[tool] = (extraction.tools_summary[tool] || 0) + count;
+    }
+  }
 
   const snapshot: Snapshot = {
     snapshot_id: snapshotId,
@@ -58,6 +83,7 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
     files_changed: extraction.files_changed,
     tools_summary: extraction.tools_summary,
     prior_snapshot_id: priorSnapshot?.snapshot_id,
+    transcript_source: options.transcriptPath, transcript_identity: identity, transcript_offset: bytesRead,
     context_remaining_pct: options.contextUsage?.remainingFraction,
     context_used_pct: options.contextUsage?.usedFraction,
     token_estimate: options.contextUsage?.usedTokens,
@@ -88,4 +114,5 @@ export async function captureSnapshot(options: CaptureOptions): Promise<Snapshot
   saveSessionState(storagePath, options.sessionId, finalState);
 
   return snapshot;
+  });
 }
