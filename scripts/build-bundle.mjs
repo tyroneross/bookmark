@@ -5,6 +5,13 @@
 // package.json and hosts/ by going two directories up from its own file.
 // CI rebuilds it and fails if the committed copy differs.
 import { build } from 'esbuild';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// esbuild writes module-path comments relative to its working directory, so a
+// build run from another folder produced a different bundle (commit d5fb58e
+// carried `../../git-folder/bookmark/node_modules/...`). Pin it to the repo root.
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 const entries = {
   'cli/index': 'src/cli/index.ts',
@@ -12,6 +19,7 @@ const entries = {
 };
 
 await build({
+  absWorkingDir: repoRoot,
   entryPoints: entries,
   outdir: 'bundle',
   outExtension: { '.js': '.mjs' },
