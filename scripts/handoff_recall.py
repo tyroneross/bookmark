@@ -30,6 +30,8 @@ Both expect the answer as JSON: {"answers": {"<id>": "<text>", ...}}.
 
   grade        Score answers against the quiz. Exit 0 when the weighted score
                reaches pass_score, 1 otherwise. --json for machine output.
+               Correct answers earn their weight; forbidden claims subtract it;
+               all other outcomes earn zero. Scores can therefore be negative.
 
 Matching is case-insensitive substring matching after whitespace
 normalisation, deliberately simple so a reader can predict a grade. A failed
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 from pathlib import Path
@@ -56,21 +59,45 @@ ANSWER_RULES = (
 
 def load_quiz(path: Path) -> dict:
     quiz = json.loads(path.read_text(encoding="utf-8"))
-    if quiz.get("schema") != SCHEMA:
+    if not isinstance(quiz, dict) or quiz.get("schema") != SCHEMA:
         raise ValueError(f"{path}: schema must be {SCHEMA}")
+    pass_score = quiz.get("pass_score", 0.8)
+    if not _finite_number(pass_score) or not 0 <= pass_score <= 1:
+        raise ValueError("pass_score must be a finite number between 0 and 1")
+    if not isinstance(quiz.get("questions"), list):
+        raise ValueError("questions must be a list")
     seen = set()
     for q in quiz.get("questions", []):
+        if not isinstance(q, dict):
+            raise ValueError("each question must be an object")
         for key in ("id", "question", "expect_all"):
             if key not in q:
                 raise ValueError(f"question {q.get('id', '?')}: missing {key}")
+        if not all(isinstance(q[key], str) and q[key].strip() for key in ("id", "question")):
+            raise ValueError("question id and question must be non-empty strings")
         if q["id"] in seen:
             raise ValueError(f"duplicate question id {q['id']}")
         seen.add(q["id"])
-        if not all(isinstance(g, list) and g for g in q["expect_all"]):
-            raise ValueError(f"question {q['id']}: expect_all must be a list of non-empty lists")
+        groups = q["expect_all"]
+        if not isinstance(groups, list) or not groups or not all(_fact_list(g) for g in groups):
+            raise ValueError(f"question {q['id']}: expect_all must contain non-empty lists of facts")
+        if "forbid" in q and not _fact_list(q["forbid"], allow_empty=True):
+            raise ValueError(f"question {q['id']}: forbid must be a list of non-empty strings")
+        weight = q.get("weight", 1)
+        if not _finite_number(weight) or weight <= 0:
+            raise ValueError(f"question {q['id']}: weight must be finite and positive")
     if not seen:
         raise ValueError("quiz has no questions")
     return quiz
+
+
+def _finite_number(value: object) -> bool:
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _fact_list(value: object, *, allow_empty: bool = False) -> bool:
+    return (isinstance(value, list) and (allow_empty or bool(value))
+            and all(isinstance(fact, str) and fact.strip() for fact in value))
 
 
 def _norm(text: str) -> str:
@@ -100,6 +127,7 @@ def grade(quiz: dict, answers: dict) -> dict:
     rows = [grade_one(q, got.get(q["id"])) for q in quiz["questions"]]
     total = sum(r["weight"] for r in rows)
     earned = sum(r["weight"] for r in rows if r["outcome"] == "pass")
+    earned -= sum(r["weight"] for r in rows if r["outcome"] == "wrong")
     score = earned / total if total else 0.0
     return {"score": round(score, 3), "pass_score": quiz.get("pass_score", 0.8),
             "passed": score >= quiz.get("pass_score", 0.8), "questions": rows,

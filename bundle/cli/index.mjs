@@ -4726,11 +4726,12 @@ async function captureSnapshot(options) {
   const storagePath = getStoragePath(options.cwd, config);
   return withFileLock(join9(storagePath, "capture"), () => {
     const state = loadSessionState(storagePath, options.sessionId);
+    const sessionId = options.sessionId ?? state.session_id ?? "unknown";
     const priorSnapshot = loadLatestSnapshot(storagePath);
     const stat = statSync5(options.transcriptPath);
     const identity = `${stat.dev}:${stat.ino}:${stat.birthtimeMs}`;
-    const canResume = priorSnapshot?.transcript_source === options.transcriptPath && priorSnapshot.transcript_identity === identity && (priorSnapshot.transcript_offset ?? Infinity) <= stat.size;
-    if (canResume && priorSnapshot.transcript_offset === stat.size && options.trigger !== "manual" && options.trigger !== "token_threshold") return priorSnapshot;
+    const canResume = priorSnapshot?.transcript_source === options.transcriptPath && priorSnapshot.session_id === sessionId && priorSnapshot.transcript_identity === identity && (priorSnapshot.transcript_offset ?? Infinity) <= stat.size;
+    if (canResume && priorSnapshot.transcript_offset === stat.size && (options.trigger === "session_end" || options.trigger === "time_interval")) return priorSnapshot;
     const offset = canResume ? priorSnapshot.transcript_offset : 0;
     const { entries, bytesRead } = parseTranscript(options.transcriptPath, { startOffset: offset });
     const extraction = extractFilesAndTools(entries, { projectPath: options.cwd });
@@ -4742,7 +4743,11 @@ async function captureSnapshot(options) {
         files.set(file.path, old ? {
           ...file,
           operations: [.../* @__PURE__ */ new Set([...old.operations, ...file.operations])],
-          lines_changed: (old.lines_changed || 0) + (file.lines_changed || 0)
+          lines_changed: (old.lines_changed || 0) + (file.lines_changed || 0),
+          summary: [.../* @__PURE__ */ new Set([
+            ...old.summary?.split(", ") ?? [],
+            ...file.summary?.split(", ") ?? []
+          ])].join(", ") || void 0
         } : file);
       }
       extraction.files_changed = [...files.values()];
@@ -4753,7 +4758,7 @@ async function captureSnapshot(options) {
     const snapshot = {
       snapshot_id: snapshotId,
       timestamp: Date.now(),
-      session_id: options.sessionId ?? state.session_id ?? "unknown",
+      session_id: sessionId,
       project_path: options.cwd,
       trigger: options.trigger,
       compaction_cycle: state.compaction_count,

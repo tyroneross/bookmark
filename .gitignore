@@ -9,3 +9,4 @@ dist/
 
 # build-loop runtime state (local only)
 .build-loop/
+__pycache__/

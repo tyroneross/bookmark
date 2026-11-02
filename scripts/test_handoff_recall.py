@@ -72,3 +72,33 @@ def test_cold_prompt_embeds_the_handoff_and_every_question(tmp_path):
     text = hr.cmd_cold_prompt(QUIZ, h)
     assert "head=64197d8" in text and all(f"- {q['id']}:" in text for q in QUIZ["questions"])
     assert "unknown" in text  # the reader is told not to guess
+
+
+@pytest.mark.parametrize("changes", [
+    {"expect_all": []}, {"expect_all": [[""]]}, {"expect_all": [["  "]]},
+    {"expect_all": "fact"}, {"expect_all": [[None]]},
+    {"weight": -1}, {"weight": 0}, {"weight": True}, {"weight": float("inf")},
+    {"forbid": [""]},
+])
+def test_quiz_rejects_rules_that_can_pass_without_facts_or_corrupt_scores(tmp_path, changes):
+    question = dict(QUIZ["questions"][0], **changes)
+    path = tmp_path / "quiz.json"
+    path.write_text(json.dumps(dict(QUIZ, questions=[question])))
+    with pytest.raises(ValueError):
+        hr.load_quiz(path)
+
+
+@pytest.mark.parametrize("threshold", [-0.1, 1.1, float("nan"), "0.8", True])
+def test_quiz_rejects_invalid_pass_scores(tmp_path, threshold):
+    path = tmp_path / "quiz.json"
+    path.write_text(json.dumps(dict(QUIZ, pass_score=threshold)))
+    with pytest.raises(ValueError):
+        hr.load_quiz(path)
+
+
+def test_forbidden_claim_scores_worse_than_abstaining():
+    known = {"head": "64197d8", "tests": "491 golden 48"}
+    unknown = hr.grade(QUIZ, {"answers": dict(known, push="unknown")})
+    wrong = hr.grade(QUIZ, {"answers": dict(known, push="pushed to origin")})
+    assert wrong["score"] < unknown["score"]
+    assert unknown["passed"] and not wrong["passed"]

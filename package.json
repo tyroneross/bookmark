@@ -38,7 +38,7 @@
     "build:fixshebang": "node -e \"const fs=require('fs');const f='dist/cli/index.js';let c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!')){c='#!/usr/bin/env node\\n'+c;fs.writeFileSync(f,c);}\"",
     "dev": "tsc --watch",
     "start": "node dist/cli/index.js",
-    "test": "vitest run",
+    "test": "vitest run --exclude '.build-loop/**'",
     "clean": "rm -rf dist",
     "prepublishOnly": "npm run clean && npm run build",
     "postinstall": "node dist/setup/auto-setup.js || true",
