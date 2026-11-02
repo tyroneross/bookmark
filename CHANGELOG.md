@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.6.2](https://github.com/tyroneross/bookmark/compare/bookmark-v0.6.1...bookmark-v0.6.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* **build:** pin the plugin bundle build to the repo root ([540f9ad](https://github.com/tyroneross/bookmark/commit/540f9adcff58bb9f5d23e5ddce05f3b75b325dd0))
+* **review:** correct handoff recall scoring and snapshot delta capture ([b589ace](https://github.com/tyroneross/bookmark/commit/b589aceb2fb76f8974360c8147c90497bbeeb179))
+
 ## [0.6.1](https://github.com/tyroneross/bookmark/compare/bookmark-v0.6.0...bookmark-v0.6.1) (2026-10-29)
 
 
