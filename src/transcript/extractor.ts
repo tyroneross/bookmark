@@ -8,7 +8,7 @@ import type { TranscriptEntry, FileActivity, FileOperation } from '../types.js';
  * scratchpad in /tmp).
  *
  * Why: snapshots used to embed absolute paths
- * (e.g. /Users/tyroneross/Desktop/git-folder/...). When the project moved
+ * (e.g. /Users/example/Desktop/git-folder/...). When the project moved
  * to ~/dev/git-folder/... every old absolute path went stale, defeating
  * the whole point of the snapshot. Going forward we store paths relative
  * to project_path so a move only needs the project_path field updated

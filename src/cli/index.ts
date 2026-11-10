@@ -1254,7 +1254,7 @@ function discoverTranscriptPath(cwd: string): string | null {
     const projectDirs = readdirSync(claudeProjectsDir);
 
     // Claude Code encodes paths by replacing / with -
-    // e.g., /Users/tyroneross/myproject → -Users-tyroneross-myproject
+    // e.g., /Users/example/myproject → -Users-example-myproject
     const encodedCwd = cwd.replace(/\//g, '-');
 
     // Exact match only — fuzzy matching caused cross-project contamination

@@ -348,7 +348,7 @@ Smallest useful implementation:
 
 ```bash
 claude plugin validate .
-node /Users/tyroneross/.codex/plugins/cache/openai-curated/plugin-eval/c6ea566d/scripts/plugin-eval.js analyze . --format markdown
+node <codex-plugin-cache>/openai-curated/plugin-eval/scripts/plugin-eval.js analyze . --format markdown
 npm pack --dry-run --json
 npm test
 ```

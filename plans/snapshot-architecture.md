@@ -81,7 +81,7 @@ A lightweight, cross-project index. Pointer data only — no snapshot content.
   "version": "1.0.0",
   "last_updated": 1776230669940,
   "last_project": {
-    "path": "/Users/tyroneross/Documents/Obsidian Vault",
+    "path": "/Users/example/Documents/Obsidian Vault",
     "name": "Obsidian Vault",
     "slug": "obsidian-vault",
     "last_snapshot_at": 1776230669940
@@ -91,10 +91,10 @@ A lightweight, cross-project index. Pointer data only — no snapshot content.
       "id": "SNAP_20260414_222429__obsidian-vault",
       "timestamp": 1776230669940,
       "trigger": "manual",
-      "project_path": "/Users/tyroneross/Documents/Obsidian Vault",
+      "project_path": "/Users/example/Documents/Obsidian Vault",
       "project_name": "Obsidian Vault",
       "project_slug": "obsidian-vault",
-      "canonical_file": "/Users/tyroneross/Documents/Obsidian Vault/.bookmark/snapshots/SNAP_20260414_222429__obsidian-vault.json",
+      "canonical_file": "/Users/example/Documents/Obsidian Vault/.bookmark/snapshots/SNAP_20260414_222429__obsidian-vault.json",
       "files_changed_count": 20
     }
   ]
